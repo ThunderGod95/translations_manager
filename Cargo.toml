@@ -1,0 +1,34 @@
+[package]
+name = "tscripts_rs"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+aho-corasick = "1.1.4"
+anyhow = "1.0.100"
+chrono = "0.4.42"
+clap = { version = "4.5.51", features = ["derive", "wrap_help", "string"] }
+clipboard-win = "5.4.1"
+console = "0.16.1"
+dialoguer = { version = "0.12.0", features = ["completion", "history"] }
+directories = "6.0.0"
+itertools = "0.14.0"
+jieba-rs = "0.8.1"
+once_cell = "1.21.3"
+prettytable-rs = "0.10.0"
+rayon = "1.11.0"
+regex = "1.12.2"
+sanitize-filename = "0.6.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+strsim = "0.11.1"
+strum = { version = "0.27.2", features = ["derive"] }
+toml = "0.9.8"
+unicode-normalization = "0.1.25"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
