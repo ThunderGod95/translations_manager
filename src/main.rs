@@ -1,24 +1,27 @@
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{anyhow, bail, Context, Result};
 use clap::Parser;
 use dialoguer::theme::ColorfulTheme;
 use dialoguer::{Confirm, Select};
 use directories::BaseDirs;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
-use std::path::Path;
-use std::{fs, process};
+use std::fs;
+use std::path::{Path, PathBuf};
 use strum::VariantArray;
 
 use crate::commands::args::populate_find_arguments;
 use crate::commands::*;
+use crate::config::CONFIG;
+use crate::dist::{distribute, DistributionFormat};
 use crate::tasks::{run_config_task, run_find_task, run_glossary_task};
-use crate::util::{get_cache_path, log_error, log_info, log_warning};
+use crate::util::{get_cache_path, log_info, log_warning};
 
 pub mod commands;
 pub mod config;
 pub mod dist;
 pub mod find;
 pub mod glossary;
+pub mod pandoc;
 pub mod tasks;
 pub mod util;
 
@@ -93,15 +96,15 @@ fn handle_task(
     };
 
     match task {
-    Command::Glossary => run_glossary_task(&project_path)?,
-    Command::Find(args) => {
-      populate_find_arguments(args)?;
-      run_find_task(args, &project_path)?;
+        Command::Glossary => run_glossary_task(&project_path)?,
+        Command::Find(args) => {
+            populate_find_arguments(args)?;
+            run_find_task(args, &project_path)?;
+        }
+        Command::Config /* | Command::Help */ => {
+            unreachable!("Pathless commands should have been handled by the guard match")
+        }
     }
-    Command::Config /* | Command::Help */ => {
-      unreachable!("Pathless commands should have been handled by the guard match")
-    }
-  }
 
     Ok(())
 }
@@ -216,9 +219,28 @@ fn get_projects(base_path: &Path) -> Result<Vec<String>> {
     Ok(projects)
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     // if let Err(e) = run_app() {
     //     log_error(format!("Error: {}", e));
     //     process::exit(1);
     // }
+
+    let project_dir = PathBuf::from(r"C:\Users\tarun\Translations\TheMirrorLegacy");
+    let translations_dir = project_dir.join(&CONFIG.translations_folder);
+    let assets_dir = project_dir.join(&CONFIG.assets_folder);
+    let dist_dir = project_dir.join("dist_try_rs");
+
+    let results = distribute(
+        DistributionFormat::PDF,
+        translations_dir,
+        assets_dir,
+        dist_dir,
+    )
+    .await
+    .unwrap();
+
+    results.iter().for_each(|rs| {
+        rs.as_ref().unwrap();
+    });
 }

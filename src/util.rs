@@ -6,7 +6,7 @@ use std::{
     process::Command,
 };
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use console::Style;
 use directories::ProjectDirs;
 use once_cell::sync::Lazy;
@@ -154,24 +154,8 @@ pub fn get_file_contents_with_numbers(
         .collect()
 }
 
-pub fn clear_dir_contents(path: impl AsRef<Path>) -> Result<()> {
-    if !path.as_ref().exists() {
-        return Ok(());
-    }
-
-    for entry in fs::read_dir(path)? {
-        let entry = entry?;
-        let entry_path = entry.path();
-
-        if entry_path.is_dir() {
-            clear_dir_contents(&entry_path)?;
-            fs::remove_dir(entry_path)?;
-        } else {
-            fs::remove_file(entry_path)?;
-        }
-    }
-
-    Ok(())
+pub fn normalize_path(path: impl AsRef<str>) -> String {
+    path.as_ref().replace("\\", "/")
 }
 
 pub fn open_in_vs_code(file_paths: &[impl AsRef<OsStr>]) {

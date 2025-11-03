@@ -1,21 +1,18 @@
-use std::{
-    fmt::Write,
-    fs::{File, create_dir_all, metadata, read_dir, read_to_string},
-    io::{BufReader, ErrorKind, Read},
-    path::{Path, PathBuf},
-};
-
-use anyhow::{Context, Result, anyhow};
+use crate::config::CONFIG;
+use crate::pandoc::{PandocArgs, PandocMetadata};
+use crate::util::{log_info, normalize_path};
+use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
-use rayon::prelude::*;
-use sanitize_filename::Options;
+use futures::future::join_all;
+use path_clean::PathClean;
+use sanitize_filename::sanitize;
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use strum::Display;
-
-use crate::{
-    config::CONFIG,
-    util::{clear_dir_contents, get_sorted_md_file_paths, log_info},
-};
+use tokio::fs::{create_dir_all, metadata, read_to_string, remove_dir_all};
+use tokio::io::AsyncWriteExt;
+use tokio::process::Command;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct VolumeInfo {
@@ -29,15 +26,18 @@ struct VolumeInfo {
     author: String,
     translator: String,
     rights: String,
-    image: PathBuf,
+    image: String,
 }
 
 impl VolumeInfo {
-    fn load(from: impl AsRef<Path>) -> Result<Vec<Self>> {
-        let file = File::open(from)?;
-        let reader = BufReader::new(file);
+    async fn load(from: impl AsRef<Path>) -> Result<Vec<Self>> {
+        let content = read_to_string(from)
+            .await
+            .context("Failed to read volume separation file")?;
+
         let data =
-            serde_json::from_reader(reader).context("Failed to load volume separation info.")?;
+            serde_json::from_str(&content).context("Failed to parse volume separation info.")?;
+
         Ok(data)
     }
 }
@@ -48,247 +48,251 @@ pub enum DistributionFormat {
     PDF,
 }
 
-// pub fn distribute(
-//     dist_format: DistributionFormat,
-//     translations_dir: impl AsRef<Path>,
-//     assets_dir: impl AsRef<Path>,
-//     dist_dir: impl AsRef<Path>,
-// ) -> Result<()> {
-//     let translations_dir = translations_dir.as_ref();
-//     let assets_dir = assets_dir.as_ref();
+pub async fn distribute(
+    dist_format: DistributionFormat,
+    translations_dir: impl AsRef<Path>,
+    assets_dir: impl AsRef<Path>,
+    dist_dir: impl AsRef<Path>,
+) -> Result<Vec<Result<()>>> {
+    let translations_dir = translations_dir.as_ref();
+    let assets_dir = assets_dir.as_ref();
+    let output_sub_dir = prepare_output_directory(&dist_dir, dist_format).await?;
 
-//     let volumes = VolumeInfo::load(assets_dir.join(&CONFIG.sep_info_file))?;
-//     let num_volumes = volumes.len();
+    let volumes = VolumeInfo::load(assets_dir.join(&CONFIG.sep_info_file)).await?;
 
-//     log_info(format!("Creating {} {}s...", num_volumes, dist_format));
+    log_info(format!(
+        "Creating {}s... (Total: {})",
+        dist_format,
+        volumes.len()
+    ));
 
-//     let output_dir = dist_dir
-//         .as_ref()
-//         .join(dist_format.to_string().to_lowercase());
+    let futures = {
+        let mut futures = Vec::with_capacity(volumes.len());
 
-//     fs::create_dir_all(&output_dir)?;
+        for vol in &volumes {
+            let fut = process_volume(
+                vol,
+                dist_format,
+                translations_dir,
+                assets_dir,
+                &output_sub_dir,
+            );
+            futures.push(fut);
+        }
 
-//     let file_paths = get_sorted_md_file_paths(translations_dir)?;
+        futures
+    };
 
-//     let pb = ProgressBar::new(num_volumes as u64);
-//     pb.set_style(
-//         ProgressStyle::default_bar()
-//             .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({percent}%) - {msg}")
-//             .expect("Invalid progress bar template")
-//             .progress_chars("#>-"),
-//     );
+    let results = join_all(futures).await;
 
-//     let results: Result<Vec<()>> = volumes
-//         .par_iter()
-//         .map(|volume| {
-//             pb.set_message(volume.title.clone());
-
-//             let file_name = get_sanitized_name(&volume.title, dist_format);
-//             let (start_index, end_index) =
-//                 normalize_indexes(&file_paths, volume.file_start, volume.file_end)?;
-
-//             let mut pandoc = pandoc(dist_format, &assets_dir)?;
-
-//             pandoc.set_variable("title", &volume.title);
-//             pandoc.set_variable("author", &volume.author);
-//             pandoc.set_variable("translator", &volume.translator);
-//             pandoc.set_variable("rights", &volume.rights);
-//             pandoc.set_variable("series", &volume.series);
-//             pandoc.set_variable("group-position", &volume.position.to_string());
-//             pandoc.set_variable("publisher", "ThunderGod95");
-//             pandoc.set_variable(
-//                 "identifier",
-//                 "https://github.com/ThunderGod95/TheMirrorLegacy",
-//             );
-//             let now = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-//             pandoc.set_variable("date", &now);
-
-//             let image_path = assets_dir.join(&volume.image);
-
-//             if image_path.exists() {
-//                 pandoc.set_variable("cover-image", &image_path.to_string_lossy());
-//             } else {
-//                 return Err(anyhow!(
-//                     "Cover image '{}' not found in assets for volume: {}",
-//                     volume.image.display(),
-//                     volume.title
-//                 ));
-//             }
-
-//             let output_file_path = output_dir.join(&file_name);
-//             pandoc.set_output(OutputKind::File(output_file_path));
-
-//             let file_to_add = &file_paths[start_index..=end_index];
-
-//             for file in file_to_add {
-//                 pandoc.add_input(file);
-//             }
-
-//             pandoc.execute()?;
-
-//             pb.inc(1);
-
-//             Ok(())
-//         })
-//         .collect();
-
-//     results?;
-
-//     pb.finish_with_message(format!(
-//         "Successfully created {} {}s",
-//         num_volumes, dist_format
-//     ));
-
-//     Ok(())
-// }
-
-// fn pandoc(dist_format: DistributionFormat, assets_dir: impl AsRef<Path>) -> Result<Pandoc> {
-//     let assets_dir = assets_dir.as_ref();
-//     let mut pandoc = Pandoc::new();
-
-//     pandoc.set_doc_class(DocumentClass::Book);
-//     pandoc.set_show_cmdline(true);
-//     pandoc.set_input_format(InputFormat::MarkdownGithub, vec![]);
-//     pandoc.set_variable("lang", "en");
-
-//     let css_file = assets_dir.join("epub.css");
-//     let font_regular = assets_dir.join("fonts/BKANT.TTF");
-//     let font_bold = assets_dir.join("fonts/ANTQUAB.TTF");
-
-//     match dist_format {
-//         DistributionFormat::EPUB => {
-//             pandoc.set_output_format(OutputFormat::Epub3);
-
-//             // Embed the font files into the EPUB
-//             if font_regular.exists() {
-//                 pandoc.add_option(PandocOption::EpubEmbedFont(font_regular));
-//             }
-//             if font_bold.exists() {
-//                 pandoc.add_option(PandocOption::EpubEmbedFont(font_bold));
-//             }
-
-//             if css_file.exists() {
-//                 let css_file_string = css_file.to_str().unwrap().to_owned();
-//                 pandoc.add_option(PandocOption::Css(css_file_string));
-//             }
-//         }
-//         DistributionFormat::PDF => {
-//             pandoc.set_output_format(OutputFormat::Pdf);
-//             pandoc.add_option(PandocOption::PdfEngine("xelatex".into()));
-
-//             pandoc.set_variable("classoption", "openany");
-//             pandoc.set_variable("mainfont", "Book Antiqua");
-//             pandoc.set_variable("fontsize", "12pt");
-//             pandoc.set_variable("geometry", "margin=1.5in");
-//             pandoc.set_variable("linestretch", "1.25");
-
-//             let tweak_chapter_space =
-//                 "\\usepackage{titlesec}\n\\titlespacing*{\\chapter}{0pt}{0pt}{20pt}";
-//             pandoc.set_variable("header-includes", tweak_chapter_space);
-//         }
-//     }
-
-//     Ok(pandoc)
-// }
-
-// fn get_sanitized_name(title: &str, dist_format: DistributionFormat) -> String {
-//     let sanitization_options = Options {
-//         replacement: "-",
-//         ..Default::default()
-//     };
-
-//     sanitize_filename::sanitize_with_options(
-//         format!("{}.{}", title, dist_format.to_string().to_lowercase()),
-//         sanitization_options,
-//     )
-// }
-
-// fn normalize_indexes(
-//     file_paths: &Vec<PathBuf>,
-//     start: usize,
-//     end: usize,
-// ) -> Result<(usize, usize)> {
-//     let start_stem = start.to_string();
-//     let end_stem = end.to_string();
-
-//     let start_index = file_paths
-//         .iter()
-//         .position(|path| {
-//             path.file_stem()
-//                 .and_then(|s| s.to_str())
-//                 .map(|stem_str| stem_str.to_string())
-//                 .map_or(false, |stem| stem == start_stem)
-//         })
-//         .ok_or_else(|| {
-//             anyhow!(
-//                 "Start file stem '{}' not found in translations_dir",
-//                 start_stem
-//             )
-//         })?;
-
-//     let end_index_relative = file_paths[start_index..]
-//         .iter()
-//         .position(|path| {
-//             path.file_stem()
-//                 .and_then(|s| s.to_str())
-//                 .map(|stem_str| stem_str.to_string())
-//                 .map_or(false, |stem| stem == end_stem)
-//         })
-//         .ok_or_else(|| {
-//             anyhow!(
-//                 "End file stem '{}' not found *after* start file '{}'",
-//                 end_stem,
-//                 start_stem
-//             )
-//         })?;
-
-//     let end_index = start_index + end_index_relative;
-
-//     Ok((start_index, end_index))
-// }
-
-struct PandocMetadata {
-    metadata_args: Vec<String>,
-    normalized_cover_path: Option<String>,
+    Ok(results)
 }
 
-fn prepare_output_directory(
+async fn process_volume(
+    vol: &VolumeInfo,
+    dist_format: DistributionFormat,
+    translations_dir: &Path,
+    assets_dir: &Path,
+    output_dir: &Path,
+) -> Result<()> {
+    let output_file_name = sanitize(&vol.title);
+    let output_file_path = output_dir.join(format!(
+        "{}.{}",
+        output_file_name,
+        dist_format.to_string().to_lowercase()
+    ));
+
+    let metadata = build_pandoc_metadata(&vol, &assets_dir)?;
+    let args = build_pandoc_args(
+        dist_format,
+        &metadata,
+        &translations_dir,
+        &assets_dir,
+        &output_file_path,
+    );
+    let input = build_input(
+        &translations_dir,
+        &vol,
+        dist_format,
+        metadata.get_cover_image(),
+    )
+    .await?;
+
+    run_pandoc(args, input).await
+}
+
+async fn run_pandoc(pandoc_args: PandocArgs, input: String) -> Result<()> {
+    let mut cmd = Command::new("pandoc");
+    cmd.args(pandoc_args.get())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+
+    let mut child = cmd.spawn().context(
+        "Failed to run 'pandoc'. Check whether you have installed 'pandoc' and have it in PATH.",
+    )?;
+
+    let mut stdin = child
+        .stdin
+        .take()
+        .context("Unexpected error. Failed to get child stdin.")?;
+
+    stdin
+        .write_all(input.as_bytes())
+        .await
+        .context("Failed to pass chapters' content to pandoc.")?;
+
+    drop(stdin);
+
+    let status = child
+        .wait()
+        .await
+        .context("Failed to wait on pandoc process")?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(anyhow!("Pandoc exited with status {}", status))
+    }
+}
+
+fn build_pandoc_metadata(
+    vol_info: &VolumeInfo,
+    assets_dir: impl AsRef<Path>,
+) -> Result<PandocMetadata> {
+    let cover_image_path = assets_dir.as_ref().join(&vol_info.image).clean();
+
+    let current_date = Utc::now().format("%Y-%m-%d").to_string();
+
+    let mut pandoc_metadata = PandocMetadata::default();
+
+    if cover_image_path.exists() {
+        pandoc_metadata.set_cover_image(cover_image_path);
+    }
+
+    pandoc_metadata
+        .add("title", &vol_info.title)
+        .add("creator", &vol_info.author)
+        .add("translator", &vol_info.translator)
+        .add("rights", &vol_info.rights)
+        .add("date", &current_date)
+        .add("lang", "en-US")
+        .add("belongs-to-collection", &vol_info.series)
+        .add("collection-type", "series")
+        .add("group-position", &vol_info.position)
+        .add("publisher", &vol_info.translator)
+        .add("pdftitle", &vol_info.title)
+        .add("pdfauthor", &vol_info.author);
+
+    Ok(pandoc_metadata)
+}
+
+fn build_pandoc_args(
+    dist_format: DistributionFormat,
+    metadata: &PandocMetadata,
+    translations_dir: impl AsRef<Path>,
+    assets_dir: impl AsRef<Path>,
+    output_path: impl AsRef<Path>,
+) -> PandocArgs {
+    let translations_dir = translations_dir.as_ref().display().to_string();
+    let assets_dir = assets_dir.as_ref().display().to_string();
+    let output_path = output_path.as_ref().display().to_string();
+
+    let mut pandoc_args = PandocArgs::default();
+
+    pandoc_args
+        .push_arg("--from")
+        .push_arg("markdown-yaml_metadata_block")
+        .push_arg("--resource-path")
+        .push_arg(normalize_path(translations_dir))
+        .push_arg("--resource-path")
+        .push_arg(normalize_path(assets_dir))
+        .push_arg("-o")
+        .push_arg(normalize_path(output_path))
+        .push_arg("--toc")
+        .push_arg("--top-level-division=chapter");
+
+    pandoc_args.set_variable("documentclass", "book");
+
+    if dist_format == DistributionFormat::PDF {
+        pandoc_args.set_pdf_engine("xelatex");
+        pandoc_args
+            .set_variable("fontsize", "12pt")
+            .set_variable("geometry", "margin=1.2in")
+            .set_variable("mainfont", "Book Antiqua")
+            .set_variable("classoption", "openany")
+            .set_variable("linestretch", "1.25");
+    }
+
+    let normalized_cover_image = metadata.get_cover_image();
+
+    if dist_format == DistributionFormat::EPUB && normalized_cover_image.is_some() {
+        pandoc_args.push_arg(format!(
+            "--epub-cover-image={}",
+            normalized_cover_image.unwrap()
+        ));
+    }
+
+    for arg in metadata.get_metadata_args() {
+        pandoc_args.push_arg(arg);
+    }
+
+    pandoc_args
+}
+
+async fn prepare_output_directory(
     dist_dir: impl AsRef<Path>,
     format: DistributionFormat,
 ) -> Result<PathBuf> {
     let output_sub_dir = dist_dir.as_ref().join(format.to_string().to_lowercase());
 
-    if !output_sub_dir.exists() {
-        create_dir_all(&output_sub_dir)?;
-    } else {
-        clear_dir_contents(&output_sub_dir)?;
+    if output_sub_dir.exists() {
+        remove_dir_all(&output_sub_dir).await?;
     }
+
+    create_dir_all(&output_sub_dir)
+        .await
+        .context("Failed to create output directory.")?;
 
     Ok(output_sub_dir)
 }
 
-/// Collects and validates all required `.md` files in the input directory.
-fn collect_md_files(input_dir: &Path, vol_info: &VolumeInfo) -> Result<(Vec<PathBuf>, u64)> {
+/// Collects and validates all required `.md` files in the input directory concurrently.
+async fn collect_md_files(input_dir: &Path, vol_info: &VolumeInfo) -> Result<(Vec<PathBuf>, u64)> {
     let num_files = (vol_info.file_end.saturating_sub(vol_info.file_start) + 1) as usize;
-    let mut file_paths = Vec::with_capacity(num_files);
-    let mut total_size: u64 = 0;
+    let mut tasks = Vec::with_capacity(num_files);
 
     for i in vol_info.file_start..=vol_info.file_end {
         let file_path = input_dir.join(format!("{}.md", i));
 
-        let md = metadata(&file_path)
-            .with_context(|| format!("Failed to get metadata for: {}", file_path.display()))?;
+        let task = async move {
+            let md = metadata(&file_path)
+                .await // Use the async version
+                .with_context(|| format!("Failed to get metadata for: {}", file_path.display()))?;
 
-        if !md.is_file() {
-            return Err(anyhow!(
-                "File {}.md exists but is not a regular file (Volume {}).",
-                i,
-                vol_info.position
-            ));
-        }
+            if !md.is_file() {
+                return Err(anyhow!(
+                    "File {}.md exists but is not a regular file (Volume {}).",
+                    i,
+                    vol_info.position
+                ));
+            }
+
+            Ok((file_path, md.len()))
+        };
+        tasks.push(task);
+    }
+
+    let results = join_all(tasks).await;
+
+    let mut file_paths = Vec::with_capacity(num_files);
+    let mut total_size: u64 = 0;
+
+    for result in results {
+        let (file_path, file_size) = result?;
 
         total_size = total_size
-            .checked_add(md.len())
+            .checked_add(file_size)
             .ok_or_else(|| anyhow!("Total size overflow while summing file sizes"))?;
 
         file_paths.push(file_path);
@@ -307,7 +311,7 @@ fn build_cover_prefix(
 
     if dist_format == DistributionFormat::PDF {
         if let Some(path) = cover_path {
-            let prefix = format!("![Cover]({})\n\n\\newpage\n", path.display());
+            let prefix = format!("![Cover]({})\n\n\\newpage\n\n", path.display());
             added_size = prefix.len() as u64;
             cover_prefix = prefix;
         }
@@ -317,7 +321,7 @@ fn build_cover_prefix(
 }
 
 /// Orchestrates file collection, size estimation, and content assembly.
-fn build_input(
+async fn build_input(
     input_dir: impl AsRef<Path>,
     vol_info: &VolumeInfo,
     dist_format: DistributionFormat,
@@ -326,7 +330,11 @@ fn build_input(
     let input_dir = input_dir.as_ref();
     let cover_path = normalized_cover_path.as_ref().map(|p| p.as_ref());
 
-    let (file_paths, mut total_size) = collect_md_files(input_dir, vol_info)?;
+    let (file_paths, mut total_size) = collect_md_files(input_dir, vol_info).await?;
+
+    if file_paths.is_empty() {
+        return Err(anyhow!("No files to add in: {}", &vol_info.title));
+    }
 
     // Add cover (PDF only)
     let (cover_prefix, cover_size) = build_cover_prefix(dist_format, cover_path)?;
@@ -349,22 +357,26 @@ fn build_input(
     let mut final_content = String::with_capacity(final_capacity);
     final_content.push_str(&cover_prefix);
 
-    let mut read_buffer = String::new();
+    let mut read_tasks = Vec::with_capacity(file_paths.len());
 
-    for (index, file_path) in file_paths.iter().enumerate() {
+    for file_path in file_paths {
+        let task = async move {
+            read_to_string(&file_path)
+                .await
+                .with_context(|| format!("Failed to read file: {}", file_path.display()))
+        };
+        read_tasks.push(task);
+    }
+
+    let content_results = join_all(read_tasks).await;
+
+    for (index, result) in content_results.into_iter().enumerate() {
+        let content = result?;
+
         if index > 0 {
             final_content.push_str("\n\n");
         }
-
-        let mut file = File::open(file_path)
-            .with_context(|| format!("Failed to open file: {}", file_path.display()))?;
-
-        read_buffer.clear();
-
-        file.read_to_string(&mut read_buffer)
-            .with_context(|| format!("Failed to read file: {}", file_path.display()))?;
-
-        final_content.push_str(&read_buffer);
+        final_content.push_str(&content);
     }
 
     Ok(final_content)
