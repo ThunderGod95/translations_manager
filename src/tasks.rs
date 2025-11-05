@@ -1,27 +1,36 @@
-use std::{fs::File, io::BufWriter, path::PathBuf};
-
-use anyhow::Result;
-
-use crate::{
-    commands::FindArgs,
-    config::CONFIG,
-    find::single::{FormatOption, find_matches_in_folder, format_folder_matches},
-    glossary::GlossaryProcessor,
-    util::{get_config_file_path, log_info, open_in_vs_code},
+use std::{
+    fs::File,
+    io::BufWriter,
+    path::{Path, PathBuf},
 };
 
-pub fn run_glossary_task(project_path: &PathBuf) -> Result<()> {
+use anyhow::{Result, anyhow};
+use futures::future::join_all;
+
+use crate::{
+    commands::{FindArgs, OpenArgs, ReplaceArgs},
+    config::CONFIG,
+    dist::{DistributionFormat, distribute},
+    find::single::{FormatOption, find_matches_in_folder, format_folder_matches},
+    glossary::GlossaryProcessor,
+    replace::replace_in_folder,
+    util::{
+        get_cache_path, get_config_file_path, log_error, log_info, log_success, open_in_vs_code,
+    },
+};
+
+pub async fn run_glossary_task(project_path: &PathBuf) -> Result<()> {
     let assets_path = project_path.join(&CONFIG.assets_folder);
     let translations_path = project_path.join(&CONFIG.translations_folder);
 
     let glossary_processor = GlossaryProcessor::new(assets_path, translations_path)?;
 
-    glossary_processor.process_new_chapters()?;
+    glossary_processor.process_new_chapters().await?;
 
     Ok(())
 }
 
-pub fn run_find_task(args: &FindArgs, project_path: &PathBuf) -> Result<()> {
+pub async fn run_find_task(args: &FindArgs, project_path: &PathBuf) -> Result<()> {
     let FindArgs {
         pattern,
         regex: use_regex,
@@ -84,10 +93,81 @@ pub fn run_find_task(args: &FindArgs, project_path: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-pub fn run_config_task() -> Result<()> {
+pub async fn run_internal_task() -> Result<()> {
     let config_path = get_config_file_path()?;
+    let cache_path = get_cache_path()?;
 
-    open_in_vs_code(&[config_path]);
+    open_in_vs_code(&[config_path, cache_path]).await;
 
     Ok(())
+}
+
+pub async fn run_dist_task(project_path: &Path) -> Result<()> {
+    println!("Running 'distribute' on {}", project_path.display());
+
+    let translations_dir = project_path.join(&CONFIG.translations_folder);
+    let assets_dir = project_path.join(&CONFIG.assets_folder);
+    let dist_dir = project_path.join(&CONFIG.dist_folder);
+
+    let formats_to_build = [DistributionFormat::PDF, DistributionFormat::EPUB];
+
+    let dist_tasks = formats_to_build
+        .iter()
+        .map(|&format| distribute(format, &translations_dir, &assets_dir, &dist_dir));
+
+    let results = join_all(dist_tasks).await;
+
+    for (format, result) in formats_to_build.iter().zip(results.iter()) {
+        if let Err(e) = result {
+            log_error(format!("{} creation failed.", format));
+            log_error(e);
+        }
+    }
+
+    Ok(())
+}
+
+pub async fn run_replace_task(replace_args: &ReplaceArgs, project_path: &Path) -> Result<()> {
+    let ReplaceArgs { old, new, regex } = replace_args;
+
+    let old_text = old
+        .as_deref()
+        .ok_or_else(|| anyhow!("Missing required 'old' argument"))?;
+
+    let new_text = new
+        .as_deref()
+        .ok_or_else(|| anyhow!("Missing required 'new' argument"))?;
+
+    let translations_dir = project_path.join(&CONFIG.translations_folder);
+
+    let (total_replacements, total_files_updated) =
+        replace_in_folder(translations_dir, old_text, new_text, *regex).await?;
+
+    let separator = "=".repeat(50);
+
+    log_success(format!("\n{}", separator));
+    log_success(format!("\nTotal {} files updated.", total_files_updated));
+    log_success(format!("Total {} replacements made.", total_replacements));
+    log_success(format!("{}", separator));
+
+    Ok(())
+}
+
+pub async fn run_open_task(open_args: &OpenArgs, project_path: &Path) {
+    let chapter_nos = open_args.files.as_ref();
+
+    if let Some(chapter_nos) = chapter_nos {
+        let chapter_paths: Vec<_> = chapter_nos
+            .iter()
+            .map(|no| {
+                project_path
+                    .join(&CONFIG.translations_folder) // Default is "translations"
+                    .join(format!("{}.md", no))
+            })
+            .collect();
+
+        open_in_vs_code(&chapter_paths).await;
+    } else {
+        open_in_vs_code(&[project_path]).await;
+    }
 }

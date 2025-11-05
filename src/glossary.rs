@@ -78,7 +78,10 @@ impl GlossaryProcessor {
 
         let valid_clean_terms: Vec<String> = clean_to_original_map.keys().cloned().collect();
 
-        log_success(format!("Loaded {} glossary entries.", glossary_data.len()));
+        log_success(format!(
+            "\nLoaded {} glossary entries.",
+            glossary_data.len()
+        ));
         log_success(format!(
             "{} are valid for searching.",
             valid_clean_terms.len()
@@ -101,7 +104,7 @@ impl GlossaryProcessor {
         })
     }
 
-    pub fn process_new_chapters(&self) -> Result<()> {
+    pub async fn process_new_chapters(&self) -> Result<()> {
         let chapter_file_path = self.assets_path.join(&CONFIG.chapter_file);
         let chapter_file = read_to_string(chapter_file_path).context(format!(
             "Failed to read chapter file: {}",
@@ -156,28 +159,9 @@ impl GlossaryProcessor {
             fuzzy_matches.len()
         ));
 
-        let terms_for_ngram_match: Vec<_> = self
-            .valid_clean_terms
-            .iter()
-            .filter(|term| !fuzzy_matches.contains(term.as_str()))
-            .cloned()
-            .collect();
-
-        let ngram_matches = self.chinese_ngram_search(
-            &terms_for_ngram_match,
-            &processed_chapter_text,
-            CONFIG.ngram_search_max_length,
-        );
-        log_success(format!(
-            "[{}ms] Phase 3 (Chinese N-gram/Subsequence): Found {} unique terms.",
-            time.elapsed().as_millis(),
-            ngram_matches.len()
-        ));
-
         let mut all_found_terms = HashSet::new();
         all_found_terms.extend(exact_matches);
         all_found_terms.extend(fuzzy_matches);
-        all_found_terms.extend(ngram_matches);
 
         log_info(format!(
             "\nTotal unique glossary terms after all phases: {}.",
@@ -240,7 +224,7 @@ impl GlossaryProcessor {
             .collect();
 
         println!();
-        create_and_open_files(&new_files);
+        create_and_open_files(&new_files).await;
 
         let separator = "=".repeat(50);
         println!("\n{}", separator);
@@ -298,34 +282,6 @@ impl GlossaryProcessor {
             })
             .collect()
     }
-
-    fn chinese_ngram_search(
-        &self,
-        terms: &[String],
-        text: &str,
-        ngram_search_max_length: usize,
-    ) -> HashSet<String> {
-        terms
-            .par_iter()
-            .filter_map(|original_term| {
-                let clean_term = match self.original_to_clean_map.get(original_term) {
-                    Some(t) if t.is_empty() => return None,
-                    Some(t) => t.as_str(),
-                    None => return None,
-                };
-
-                let char_count = clean_term.chars().count();
-
-                if char_count > 0 && char_count <= ngram_search_max_length {
-                    if is_subsequence(text, clean_term) {
-                        return Some(original_term.clone());
-                    }
-                }
-
-                None
-            })
-            .collect()
-    }
 }
 
 fn preprocess_chinese_text(text: &str) -> String {
@@ -335,19 +291,6 @@ fn preprocess_chinese_text(text: &str) -> String {
 
 fn calculate_similarity(s1: &str, s2: &str) -> i32 {
     (normalized_levenshtein(s1, s2) * 100.0) as i32
-}
-
-fn is_subsequence(text: &str, term: &str) -> bool {
-    let mut text_chars = text.chars();
-    for term_char in term.chars() {
-        if text_chars
-            .find(|&text_char| text_char == term_char)
-            .is_none()
-        {
-            return false;
-        }
-    }
-    true
 }
 
 fn get_last_chapter_number(translations_path: impl AsRef<Path>) -> Result<usize> {
@@ -397,7 +340,7 @@ fn preprocess_glossary(
 }
 
 fn process_chapters<'a>(cr_ch_text: &'a str, last_chapter_number: usize) -> Vec<Chapter<'a>> {
-    let captures: Vec<_> = RE_CHAPTER.captures_iter(cr_ch_text).collect();
+    let captures: Vec<_> = RE_CHAPTER.captures_iter(cr_ch_text.trim()).collect();
 
     if captures.is_empty() {
         log_error(
@@ -480,7 +423,7 @@ fn process_chapters<'a>(cr_ch_text: &'a str, last_chapter_number: usize) -> Vec<
     processed_chapters
 }
 
-fn create_and_open_files(paths: &[impl AsRef<Path>]) {
+async fn create_and_open_files(paths: &[impl AsRef<Path>]) {
     let mut paths_to_open: Vec<&Path> = Vec::with_capacity(paths.len());
 
     for path_ref in paths {
@@ -501,6 +444,6 @@ fn create_and_open_files(paths: &[impl AsRef<Path>]) {
     }
 
     if !paths_to_open.is_empty() {
-        open_in_vs_code(&paths_to_open);
+        open_in_vs_code(&paths_to_open).await;
     }
 }

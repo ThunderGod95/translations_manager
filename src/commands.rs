@@ -6,9 +6,9 @@ use strum::{Display, EnumString, VariantArray};
 #[derive(Parser)]
 #[command(
     version,
-    about = "A CLI tool for managing translation projects.", // Good short summary
-    long_about = "A command-line interface to assist with translation workflows, \
-                  including glossary generation and content searching." // Added more detail
+    about = "Tool for managing translation projects.",
+    long_about = "A tool to assist with translation workflows, \
+                  including glossary generation and content searching."
 )]
 pub struct Cli {
     /// The command to execute (e.g., 'glossary', 'find')
@@ -42,12 +42,30 @@ pub enum Command {
                       within a specified range of files."
     )]
     Find(FindArgs),
-    /// Edit Config.
+
+    /// Find and replace a pattern in translated chapters
     #[command(
-        name = "config",
-        long_about = "Opens the config file in VS code for editing. Will fail if VS code is not installed."
+        name = "replace",
+        long_about = "Finds and replaces occurrences of a pattern (text or regex) \
+                      with new text within a specified range of files."
     )]
-    Config,
+    Replace(ReplaceArgs),
+
+    #[command(
+        name = "distribute",
+        long_about = "Bundles up all translated chapters into EPUBs and PDFs by volumes (as specified in sep.json)."
+    )]
+    Distribute,
+
+    #[command(name = "open", long_about = "Open specified chapter(s) in VS Code.")]
+    Open(OpenArgs),
+
+    /// Edit Config files.
+    #[command(
+        name = "internal",
+        long_about = "Opens the internal config files in VS code for editing. Will fail if VS code is not installed."
+    )]
+    Internal,
 }
 
 impl Command {
@@ -55,7 +73,10 @@ impl Command {
         match task {
             Task::Glossary => Command::Glossary,
             Task::Find => Command::Find(FindArgs::default()),
-            Task::Config => Command::Config,
+            Task::Replace => Command::Replace(ReplaceArgs::default()),
+            Task::Distribute => Command::Distribute,
+            Task::Open => Command::Open(OpenArgs::default()),
+            Task::Internal => Command::Internal,
         }
     }
 }
@@ -63,7 +84,6 @@ impl Command {
 #[derive(Debug, Clone, Args, PartialEq, Eq, Default)]
 pub struct FindArgs {
     /// The text or regular expression to search for
-    #[arg(short, long)]
     pub pattern: Option<String>,
 
     /// File to write all matching paragraphs to (optional)
@@ -87,7 +107,23 @@ pub struct FindArgs {
     pub silent: bool,
 }
 
-// These comments are for developers, not the CLI help, so they are fine.
+#[derive(Debug, Clone, Args, PartialEq, Eq, Default)]
+pub struct ReplaceArgs {
+    /// The text or regular expression to replace
+    pub old: Option<String>,
+    /// The text to replace with
+    pub new: Option<String>,
+    /// Treat the search pattern as a regular expression
+    #[arg(required = false, short, long, action = clap::ArgAction::SetTrue)]
+    pub regex: bool,
+}
+
+#[derive(Debug, Clone, Args, PartialEq, Eq, Default)]
+pub struct OpenArgs {
+    /// Chapters to open in VS Code.
+    pub files: Option<Vec<usize>>,
+}
+
 #[derive(Debug, Clone, Copy, VariantArray, EnumString, Display)]
 #[strum(serialize_all = "lowercase")]
 pub enum Task {
@@ -95,7 +131,14 @@ pub enum Task {
     Glossary,
     /// The pattern finding task
     Find,
-    Config,
+    /// The pattern replacing task
+    Replace,
+    /// The distribution task
+    Distribute,
+    /// The chapter opening task
+    Open,
+    /// Editing the config task
+    Internal,
 }
 
 pub mod args {
@@ -105,7 +148,7 @@ pub mod args {
     use dialoguer::{Confirm, History, Input, theme::ColorfulTheme};
 
     use crate::{
-        commands::{FindArgs, args::histories::FindHistory},
+        commands::{FindArgs, ReplaceArgs, args::histories::FindHistory},
         util::get_find_history_config_path,
     };
 
@@ -115,8 +158,11 @@ pub mod args {
     pub fn populate_arguments(command: &mut Command) -> Result<()> {
         match command {
             Command::Glossary => Ok(()),
-            Command::Config => Ok(()),
+            Command::Internal => Ok(()),
+            Command::Distribute => Ok(()),
+            Command::Open(_) => Ok(()),
             Command::Find(find_args) => populate_find_arguments(find_args),
+            Command::Replace(replace_args) => populate_replace_arguments(replace_args),
         }
     }
 
@@ -186,6 +232,38 @@ pub mod args {
         };
         find_args.regex = regex;
         find_args.silent = silent;
+
+        Ok(())
+    }
+
+    pub fn populate_replace_arguments(replace_args: &mut ReplaceArgs) -> Result<()> {
+        let theme = ColorfulTheme::default();
+
+        if replace_args.old.is_none() {
+            let old: String = Input::with_theme(&theme)
+                .with_prompt("Enter the pattern to replace (required)")
+                .allow_empty(false)
+                .interact_text()?;
+
+            replace_args.old = Some(old);
+        }
+
+        if replace_args.new.is_none() {
+            let new: String = Input::with_theme(&theme)
+                .with_prompt("Enter the replacement (required)")
+                .allow_empty(false)
+                .interact_text()?;
+
+            replace_args.new = Some(new);
+        }
+
+        let regex = Confirm::with_theme(&theme)
+            .with_prompt("Treat the search pattern as a regular expression?")
+            .default(false)
+            .show_default(true)
+            .interact()?;
+
+        replace_args.regex = regex;
 
         Ok(())
     }

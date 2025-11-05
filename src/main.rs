@@ -1,20 +1,18 @@
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
 use dialoguer::theme::ColorfulTheme;
 use dialoguer::{Confirm, Select};
 use directories::BaseDirs;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::{fs, process};
 use strum::VariantArray;
 
-use crate::commands::args::populate_find_arguments;
+use crate::commands::args::populate_arguments;
 use crate::commands::*;
-use crate::config::CONFIG;
-use crate::dist::{distribute, DistributionFormat};
-use crate::tasks::{run_config_task, run_find_task, run_glossary_task};
-use crate::util::{get_cache_path, log_info, log_warning};
+use crate::tasks::*;
+use crate::util::{get_cache_path, log_error, log_info, log_warning};
 
 pub mod commands;
 pub mod config;
@@ -22,12 +20,11 @@ pub mod dist;
 pub mod find;
 pub mod glossary;
 pub mod pandoc;
+pub mod replace;
 pub mod tasks;
 pub mod util;
 
-fn run_app() -> Result<()> {
-    let cli = Cli::parse();
-
+async fn run_app(cli: Cli) -> Result<()> {
     let base_path = if let Some(path) = cli.path {
         path.canonicalize()
             .with_context(|| format!("Failed to find projects directory at: {}", path.display()))?
@@ -70,20 +67,20 @@ fn run_app() -> Result<()> {
         }
     };
 
-    handle_task(&mut selected_task, base_path, project)?;
+    handle_task(&mut selected_task, base_path, project).await?;
 
     Ok(())
 }
 
-fn handle_task(
+async fn handle_task(
     task: &mut Command,
     base_path: impl AsRef<Path>,
     project: Option<impl AsRef<Path>>,
 ) -> Result<()> {
     // First run tasks that don't need project path.
     match task {
-        Command::Config => {
-            return run_config_task();
+        Command::Internal => {
+            return run_internal_task().await;
         }
         _ => {}
     }
@@ -95,13 +92,21 @@ fn handle_task(
         base_path.as_ref().join(project)
     };
 
+    populate_arguments(task)?;
+
     match task {
-        Command::Glossary => run_glossary_task(&project_path)?,
+        Command::Glossary => run_glossary_task(&project_path).await?,
         Command::Find(args) => {
-            populate_find_arguments(args)?;
-            run_find_task(args, &project_path)?;
+            run_find_task(args, &project_path).await?;
         }
-        Command::Config /* | Command::Help */ => {
+        Command::Replace(args) => {
+            run_replace_task(args, &project_path).await?;
+        }
+        Command::Distribute => run_dist_task(&project_path).await?,
+        Command::Open(args) => {
+            run_open_task(args, &project_path).await;
+        }
+        Command::Internal /* | Command::Help */ => {
             unreachable!("Pathless commands should have been handled by the guard match")
         }
     }
@@ -221,26 +226,10 @@ fn get_projects(base_path: &Path) -> Result<Vec<String>> {
 
 #[tokio::main]
 async fn main() {
-    // if let Err(e) = run_app() {
-    //     log_error(format!("Error: {}", e));
-    //     process::exit(1);
-    // }
+    let cli = Cli::parse();
 
-    let project_dir = PathBuf::from(r"C:\Users\tarun\Translations\TheMirrorLegacy");
-    let translations_dir = project_dir.join(&CONFIG.translations_folder);
-    let assets_dir = project_dir.join(&CONFIG.assets_folder);
-    let dist_dir = project_dir.join("dist_try_rs");
-
-    let results = distribute(
-        DistributionFormat::PDF,
-        translations_dir,
-        assets_dir,
-        dist_dir,
-    )
-    .await
-    .unwrap();
-
-    results.iter().for_each(|rs| {
-        rs.as_ref().unwrap();
-    });
+    if let Err(e) = run_app(cli).await {
+        log_error(format!("Error: {}", e));
+        process::exit(1);
+    }
 }

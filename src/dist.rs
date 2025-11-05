@@ -1,9 +1,10 @@
 use crate::config::CONFIG;
 use crate::pandoc::{PandocArgs, PandocMetadata};
-use crate::util::{log_info, normalize_path};
-use anyhow::{anyhow, Context, Result};
+use crate::util::{log_error, log_info, log_success, normalize_path, sort_indexed_results};
+use anyhow::{Context, Result, anyhow};
 use chrono::Utc;
 use futures::future::join_all;
+use futures::stream::FuturesOrdered;
 use path_clean::PathClean;
 use sanitize_filename::sanitize;
 use serde::{Deserialize, Serialize};
@@ -13,6 +14,8 @@ use strum::Display;
 use tokio::fs::{create_dir_all, metadata, read_to_string, remove_dir_all};
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
+
+use futures::prelude::*;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct VolumeInfo {
@@ -53,7 +56,7 @@ pub async fn distribute(
     translations_dir: impl AsRef<Path>,
     assets_dir: impl AsRef<Path>,
     dist_dir: impl AsRef<Path>,
-) -> Result<Vec<Result<()>>> {
+) -> Result<()> {
     let translations_dir = translations_dir.as_ref();
     let assets_dir = assets_dir.as_ref();
     let output_sub_dir = prepare_output_directory(&dist_dir, dist_format).await?;
@@ -85,7 +88,42 @@ pub async fn distribute(
 
     let results = join_all(futures).await;
 
-    Ok(results)
+    log_errors(dist_format, results)
+}
+
+fn log_errors(dist_format: DistributionFormat, results: Vec<Result<()>>) -> Result<()> {
+    let total = results.len();
+    let mut errors = Vec::with_capacity(results.len());
+    let mut successes = 0;
+
+    for result in results {
+        match result {
+            Ok(_) => successes += 1,
+            Err(e) => errors.push(e),
+        }
+    }
+
+    log_success(format!(
+        "Successfully processed {}/{} {}s.",
+        successes, total, dist_format
+    ));
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        log_error(format!(
+            "Failed to process {}/{} {}:",
+            errors.len(),
+            total,
+            dist_format
+        ));
+
+        for (i, e) in errors.iter().enumerate() {
+            log_error(format!("  Failure {}: {}", i + 1, e));
+        }
+
+        Err(errors.remove(0))
+    }
 }
 
 async fn process_volume(
@@ -95,6 +133,8 @@ async fn process_volume(
     assets_dir: &Path,
     output_dir: &Path,
 ) -> Result<()> {
+    log_info(format!("Creating {} for {}", dist_format, &vol.title));
+
     let output_file_name = sanitize(&vol.title);
     let output_file_path = output_dir.join(format!(
         "{}.{}",
@@ -110,13 +150,18 @@ async fn process_volume(
         &assets_dir,
         &output_file_path,
     );
-    let input = build_input(
+    let (total_files, input) = build_input(
         &translations_dir,
         &vol,
         dist_format,
         metadata.get_cover_image(),
     )
     .await?;
+
+    log_success(format!(
+        "Successfully read and validated {} chapter files ({}...{}) for {}",
+        total_files, vol.file_start, vol.file_end, &vol.title
+    ));
 
     run_pandoc(args, input).await
 }
@@ -244,10 +289,13 @@ async fn prepare_output_directory(
     dist_dir: impl AsRef<Path>,
     format: DistributionFormat,
 ) -> Result<PathBuf> {
-    let output_sub_dir = dist_dir.as_ref().join(format.to_string().to_lowercase());
+    let sub_dir_name = format!("{}s", format.to_string().to_lowercase());
+    let output_sub_dir = dist_dir.as_ref().join(sub_dir_name);
 
     if output_sub_dir.exists() {
-        remove_dir_all(&output_sub_dir).await?;
+        remove_dir_all(&output_sub_dir)
+            .await
+            .context("Failed to remove old output directory.")?;
     }
 
     create_dir_all(&output_sub_dir)
@@ -262,40 +310,49 @@ async fn collect_md_files(input_dir: &Path, vol_info: &VolumeInfo) -> Result<(Ve
     let num_files = (vol_info.file_end.saturating_sub(vol_info.file_start) + 1) as usize;
     let mut tasks = Vec::with_capacity(num_files);
 
-    for i in vol_info.file_start..=vol_info.file_end {
-        let file_path = input_dir.join(format!("{}.md", i));
+    for (i, num) in (vol_info.file_start..=vol_info.file_end).enumerate() {
+        let file_path = input_dir.join(format!("{}.md", num));
 
         let task = async move {
             let md = metadata(&file_path)
-                .await // Use the async version
+                .await
                 .with_context(|| format!("Failed to get metadata for: {}", file_path.display()))?;
 
             if !md.is_file() {
                 return Err(anyhow!(
                     "File {}.md exists but is not a regular file (Volume {}).",
-                    i,
+                    num,
                     vol_info.position
                 ));
             }
 
-            Ok((file_path, md.len()))
+            let payload = (file_path, md.len());
+            Ok((i, payload))
         };
         tasks.push(task);
     }
 
     let results = join_all(tasks).await;
 
+    let sorted_files = sort_indexed_results(results)?;
+
     let mut file_paths = Vec::with_capacity(num_files);
     let mut total_size: u64 = 0;
 
-    for result in results {
-        let (file_path, file_size) = result?;
-
+    for (file_path, file_size) in sorted_files {
         total_size = total_size
             .checked_add(file_size)
             .ok_or_else(|| anyhow!("Total size overflow while summing file sizes"))?;
 
         file_paths.push(file_path);
+    }
+
+    if file_paths.len() != num_files {
+        return Err(anyhow!(
+            "Expected {} files. Found {}.",
+            num_files,
+            file_paths.len()
+        ));
     }
 
     Ok((file_paths, total_size))
@@ -326,7 +383,7 @@ async fn build_input(
     vol_info: &VolumeInfo,
     dist_format: DistributionFormat,
     normalized_cover_path: Option<impl AsRef<Path>>,
-) -> Result<String> {
+) -> Result<(usize, String)> {
     let input_dir = input_dir.as_ref();
     let cover_path = normalized_cover_path.as_ref().map(|p| p.as_ref());
 
@@ -351,33 +408,42 @@ async fn build_input(
             .ok_or_else(|| anyhow!("Total size overflow after adding separators"))?;
     }
 
-    let final_capacity =
-        usize::try_from(total_size).context("Total content size exceeds usize capacity")?;
+    let final_capacity = usize::try_from(total_size)
+        .context("Unexpected error: Total content size exceeds bounds. Likely a bug.")?;
 
     let mut final_content = String::with_capacity(final_capacity);
+
     final_content.push_str(&cover_prefix);
 
-    let mut read_tasks = Vec::with_capacity(file_paths.len());
+    let mut reads_futures = FuturesOrdered::new();
 
-    for file_path in file_paths {
+    for (i, file_path) in file_paths.iter().enumerate() {
         let task = async move {
-            read_to_string(&file_path)
+            let content = read_to_string(&file_path)
                 .await
-                .with_context(|| format!("Failed to read file: {}", file_path.display()))
+                .with_context(|| format!("Failed to read file: {}", file_path.display()))?;
+
+            let content = content
+                .strip_prefix('\u{FEFF}')
+                .unwrap_or(&content)
+                .to_string();
+
+            Ok((i, content))
         };
-        read_tasks.push(task);
+
+        reads_futures.push_back(task);
     }
 
-    let content_results = join_all(read_tasks).await;
+    let results = reads_futures.collect::<Vec<_>>().await;
 
-    for (index, result) in content_results.into_iter().enumerate() {
-        let content = result?;
+    let sorted_contents = sort_indexed_results(results).context("Failed to sort file contents")?;
 
-        if index > 0 {
+    for (i, contents) in sorted_contents.iter().enumerate() {
+        if i > 0 {
             final_content.push_str("\n\n");
         }
-        final_content.push_str(&content);
+        final_content.push_str(contents);
     }
 
-    Ok(final_content)
+    Ok((sorted_contents.len(), final_content))
 }

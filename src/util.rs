@@ -1,16 +1,16 @@
 use std::{
     collections::HashMap,
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     fs::{self, read_to_string},
     path::{Path, PathBuf},
-    process::Command,
 };
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use console::Style;
 use directories::ProjectDirs;
 use once_cell::sync::Lazy;
 use rayon::prelude::*;
+use tokio::process::Command;
 
 use crate::config::{CONFIG, PROJECT_PATH_QUALIFIERS};
 
@@ -158,10 +158,13 @@ pub fn normalize_path(path: impl AsRef<str>) -> String {
     path.as_ref().replace("\\", "/")
 }
 
-pub fn open_in_vs_code(file_paths: &[impl AsRef<OsStr>]) {
+pub async fn open_in_vs_code(file_paths: &[impl AsRef<OsStr>]) {
     if file_paths.is_empty() {
+        log_warning("No file paths provided to open in VS Code.".to_string());
         return;
     }
+
+    let paths_owned: Vec<OsString> = file_paths.iter().map(|p| p.as_ref().to_owned()).collect();
 
     let mut cmd;
 
@@ -176,28 +179,73 @@ pub fn open_in_vs_code(file_paths: &[impl AsRef<OsStr>]) {
         cmd.arg("_");
     };
 
-    cmd.args(file_paths);
+    cmd.args(&paths_owned);
 
     log_info(format!(
-        "✅ Attempting to open {} file(s) in VS Code...",
-        file_paths.len()
+        "✅ Opening {} file/folder(s) in VS Code...",
+        paths_owned.len(),
     ));
 
-    match cmd.status() {
-        Ok(status) => {
-            if !status.success() {
-                log_error(format!(
-                    "⚠️ VS Code command finished with a non-success status: {}",
-                    status
+    match cmd.output().await {
+        Ok(output) => {
+            if output.status.success() {
+                log_info(format!(
+                    "✅ Opended {} file/folder(s) in VS Code successfully.",
+                    paths_owned.len()
                 ));
+            } else {
+                log_error(format!(
+                    "⚠️ VS Code task finished with a non-success status: {}",
+                    output.status
+                ));
+
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                if !stderr.trim().is_empty() {
+                    log_error(format!("VS Code stderr:\n{}", stderr.trim()));
+                }
+
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                if !stdout.trim().is_empty() {
+                    log_info(format!("VS Code stdout:\n{}", stdout.trim()));
+                }
             }
         }
-
         Err(e) => {
             log_warning(format!(
-                "⚠️ Could not execute VS Code command. Is 'code' in your system's PATH? Error: {}",
+                "⚠️ Could not execute VS Code task. Is 'code' in your system's PATH? Error: {}",
                 e
             ));
         }
     }
+}
+
+pub fn sort_indexed_results<T>(results: Vec<Result<(usize, T)>>) -> Result<Vec<T>> {
+    let mut ok_results = Vec::with_capacity(results.len());
+
+    for result in results {
+        let indexed_payload = result.with_context(
+            || "File read/process error: One of the files failed to be read or processed.",
+        )?;
+
+        ok_results.push(indexed_payload);
+    }
+
+    ok_results.sort_by_key(|(i, _)| *i);
+
+    for window in ok_results.windows(2) {
+        let (current_i, _) = window[0];
+        let (next_i, _) = window[1];
+
+        if next_i != current_i + 1 {
+            bail!(
+                "File sequence error: Found file {}.md, but file {}.md is missing.",
+                current_i,
+                next_i
+            );
+        }
+    }
+
+    let sorted_payloads = ok_results.into_iter().map(|(_, payload)| payload).collect();
+
+    Ok(sorted_payloads)
 }
