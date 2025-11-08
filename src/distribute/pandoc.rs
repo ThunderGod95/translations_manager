@@ -1,0 +1,200 @@
+use super::{DistributionFormat, VolumeInfo};
+use crate::util::normalize_path;
+use anyhow::{Context, Result, anyhow};
+use chrono::Utc;
+use log::{info, warn};
+use path_clean::PathClean;
+use std::fmt::Display;
+use std::path::Path;
+use std::process::Stdio;
+use tokio::io::AsyncWriteExt;
+use tokio::process::Command;
+
+#[derive(Debug, Clone, Default)]
+pub struct PandocArgs(Vec<String>);
+
+impl PandocArgs {
+    pub fn push_arg(&mut self, arg: impl Display) -> &mut Self {
+        self.0.push(format!("{}", arg));
+        self
+    }
+
+    pub fn include_in_header(&mut self, header: impl AsRef<Path>) -> &mut Self {
+        self.0.push("--include-in-header".to_string());
+        self.0.push(header.as_ref().display().to_string());
+        self
+    }
+
+    pub fn set_pdf_engine(&mut self, engine: impl Display) -> &mut Self {
+        self.0.push(format!("--pdf-engine={}", engine));
+        self
+    }
+
+    pub fn set_variable<K: Display, V: Display>(&mut self, key: K, value: V) -> &mut Self {
+        self.0.push(format!("--variable={}:{}", key, value));
+        self
+    }
+
+    pub fn get(&self) -> &Vec<String> {
+        &self.0
+    }
+}
+
+impl Display for PandocArgs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0.join(" "))
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct PandocMetadata {
+    metadata_args: Vec<String>,
+    normalized_cover_path: Option<String>,
+}
+
+impl PandocMetadata {
+    pub fn add<K: Display, V: Display>(&mut self, key: K, value: V) -> &mut Self {
+        self.metadata_args
+            .push(format!("--metadata={}:{}", key, value));
+        self
+    }
+
+    pub fn set_cover_image(&mut self, path: impl AsRef<Path>) {
+        let clean_path_string = path.as_ref().display().to_string().replace("\\", "/");
+        self.normalized_cover_path = Some(clean_path_string);
+    }
+
+    pub fn get_cover_image(&self) -> Option<String> {
+        self.normalized_cover_path.clone()
+    }
+
+    pub fn get_metadata_args(&self) -> &Vec<String> {
+        &self.metadata_args
+    }
+}
+
+pub(super) async fn run(pandoc_args: PandocArgs, input: String) -> Result<()> {
+    let mut cmd = Command::new("pandoc");
+    cmd.args(pandoc_args.get())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+
+    let mut child = cmd.spawn().context(
+        "Failed to run 'pandoc'. Check whether you have installed 'pandoc' and have it in PATH.",
+    )?;
+
+    let mut stdin = child
+        .stdin
+        .take()
+        .context("Unexpected error. Failed to get child stdin.")?;
+
+    stdin
+        .write_all(input.as_bytes())
+        .await
+        .context("Failed to pass chapters' content to pandoc.")?;
+
+    drop(stdin);
+
+    let status = child
+        .wait()
+        .await
+        .context("Failed to wait on pandoc process")?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(anyhow!("Pandoc exited with status {}", status))
+    }
+}
+
+pub(super) fn build_metadata(
+    vol_info: &VolumeInfo,
+    assets_dir: impl AsRef<Path>,
+) -> Result<PandocMetadata> {
+    let cover_image_path = assets_dir.as_ref().join(&vol_info.image).clean();
+    let current_date = Utc::now().format("%Y-%m-%d").to_string();
+    let mut pandoc_metadata = PandocMetadata::default();
+
+    if cover_image_path.exists() {
+        pandoc_metadata.set_cover_image(cover_image_path);
+    }
+
+    pandoc_metadata
+        .add("title", &vol_info.title)
+        .add("author", &vol_info.author)
+        .add("rights", &vol_info.rights)
+        .add("date", &current_date)
+        .add("lang", "en-US")
+        .add("belongs-to-collection", &vol_info.series)
+        .add("collection-type", "series")
+        .add("group-position", &vol_info.position)
+        .add("publisher", &vol_info.translator)
+        .add("pdftitle", &vol_info.title)
+        .add("pdfauthor", &vol_info.author);
+
+    Ok(pandoc_metadata)
+}
+
+pub(super) fn build_args(
+    dist_format: DistributionFormat,
+    metadata: &PandocMetadata,
+    translations_dir: impl AsRef<Path>,
+    assets_dir: impl AsRef<Path>,
+    output_path: impl AsRef<Path>,
+) -> Result<PandocArgs> {
+    let translations_dir = translations_dir.as_ref().display().to_string();
+    let assets_dir = assets_dir.as_ref();
+    let output_path = output_path.as_ref().display().to_string();
+
+    let mut pandoc_args = PandocArgs::default();
+
+    pandoc_args
+        .push_arg("--from")
+        .push_arg("markdown-yaml_metadata_block-multiline_tables")
+        .push_arg("--resource-path")
+        .push_arg(normalize_path(translations_dir))
+        .push_arg("--resource-path")
+        .push_arg(normalize_path(assets_dir.display().to_string()))
+        .push_arg("-o")
+        .push_arg(normalize_path(output_path))
+        .push_arg("--toc")
+        .push_arg("--top-level-division=chapter");
+
+    pandoc_args.set_variable("documentclass", "scrbook");
+
+    if dist_format == DistributionFormat::PDF {
+        pandoc_args.set_pdf_engine("xelatex");
+        let pdf_style_path = assets_dir.join("dist").join("style.tex");
+
+        if pdf_style_path.exists() {
+            info!("Found PDF styles. Applying them...");
+            pandoc_args.include_in_header(pdf_style_path);
+        } else {
+            warn!("PDF styles not found. Applying default styles...");
+            pandoc_args
+                .set_variable("linestretch", "1.25")
+                .set_variable("geometry", "margin=1.2in")
+                .set_variable("mainfont", "\"Book Antiqua\"");
+        }
+
+        pandoc_args
+            .set_variable("fontsize", "12pt")
+            .set_variable("classoption", "openany");
+    }
+
+    let normalized_cover_image = metadata.get_cover_image();
+
+    if dist_format == DistributionFormat::EPUB && normalized_cover_image.is_some() {
+        pandoc_args.push_arg(format!(
+            "--epub-cover-image={}",
+            normalized_cover_image.unwrap()
+        ));
+    }
+
+    for arg in metadata.get_metadata_args() {
+        pandoc_args.push_arg(arg);
+    }
+
+    Ok(pandoc_args)
+}

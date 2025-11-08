@@ -1,3 +1,5 @@
+//! Contains the core business logic for executing each command.
+
 use std::{
     fs::File,
     io::BufWriter,
@@ -6,17 +8,17 @@ use std::{
 
 use anyhow::{Result, anyhow};
 use futures::future::join_all;
+use log::{error, info};
 
+use super::cli::{FindArgs, InitArgs, OpenArgs, ReplaceArgs};
 use crate::{
-    commands::{FindArgs, OpenArgs, ReplaceArgs},
     config::CONFIG,
-    dist::{DistributionFormat, distribute},
-    find::single::{FormatOption, find_matches_in_folder, format_folder_matches},
+    distribute::{DistributionFormat, distribute},
+    find::{FormatOption, find_single_in_folder, format_folder_matches},
     glossary::GlossaryProcessor,
+    init::{TEMPLATE_DIR, write_embedded_dir},
     replace::replace_in_folder,
-    util::{
-        get_cache_path, get_config_file_path, log_error, log_info, log_success, open_in_vs_code,
-    },
+    util::{get_cache_path, get_config_file_path, open_in_vs_code},
 };
 
 pub async fn run_glossary_task(project_path: &PathBuf) -> Result<()> {
@@ -44,19 +46,17 @@ pub async fn run_find_task(args: &FindArgs, project_path: &PathBuf) -> Result<()
     let search_pattern = pattern.as_ref().unwrap();
     let write_path = write_path.as_ref();
 
-    let matches = find_matches_in_folder(
+    let matches = find_single_in_folder(
         &folder_path,
         &search_pattern,
         *use_regex,
         *start_file,
         *end_file,
-    )?;
+    )
+    .await?;
 
     if matches.is_empty() {
-        log_info(format!(
-            "No match found in any file in: {}",
-            folder_path.display()
-        ));
+        info!("No match found in any file in: {}", folder_path.display());
         return Ok(());
     }
 
@@ -65,7 +65,7 @@ pub async fn run_find_task(args: &FindArgs, project_path: &PathBuf) -> Result<()
         format_folder_matches(&matches, FormatOption::Table, &mut buffer)?;
 
         let output_string = String::from_utf8_lossy(&buffer);
-        log_info(output_string);
+        println!("{}", output_string);
     }
 
     if let Some(path) = write_path {
@@ -75,20 +75,14 @@ pub async fn run_find_task(args: &FindArgs, project_path: &PathBuf) -> Result<()
 
         format_folder_matches(&matches, FormatOption::Paragraphs, writer)?;
 
-        log_info(format!(
-            "Successfully wrote matches to: {}",
-            file_path.display()
-        ));
+        info!("Successfully wrote matches to: {}", file_path.display());
     }
 
-    let find_file_match = matches.keys().next().unwrap().file_name().unwrap();
-    log_info(format!(
-        "Found first match in: {}",
-        find_file_match.display()
-    ));
+    let first_chapter_match = matches.first().unwrap().0;
+    println!("Found first match in -> Chapter {}", first_chapter_match);
 
-    let total_matches: usize = matches.values().map(Vec::len).sum();
-    log_info(format!("Total matches found: {}", total_matches));
+    let total_matches: usize = matches.iter().map(|(_, m)| m.len()).sum();
+    println!("Total matches found -> {}", total_matches);
 
     Ok(())
 }
@@ -103,7 +97,7 @@ pub async fn run_internal_task() -> Result<()> {
 }
 
 pub async fn run_dist_task(project_path: &Path) -> Result<()> {
-    println!("Running 'distribute' on {}", project_path.display());
+    info!("Running 'distribute' on {}", project_path.display());
 
     let translations_dir = project_path.join(&CONFIG.translations_folder);
     let assets_dir = project_path.join(&CONFIG.assets_folder);
@@ -119,8 +113,8 @@ pub async fn run_dist_task(project_path: &Path) -> Result<()> {
 
     for (format, result) in formats_to_build.iter().zip(results.iter()) {
         if let Err(e) = result {
-            log_error(format!("{} creation failed.", format));
-            log_error(e);
+            error!("{} creation failed.", format);
+            error!("{}", e);
         }
     }
 
@@ -145,10 +139,10 @@ pub async fn run_replace_task(replace_args: &ReplaceArgs, project_path: &Path) -
 
     let separator = "=".repeat(50);
 
-    log_success(format!("\n{}", separator));
-    log_success(format!("\nTotal {} files updated.", total_files_updated));
-    log_success(format!("Total {} replacements made.", total_replacements));
-    log_success(format!("{}", separator));
+    info!("\n{}", separator);
+    info!("\nTotal {} files updated.", total_files_updated);
+    info!("Total {} replacements made.", total_replacements);
+    info!("{}", separator);
 
     Ok(())
 }
@@ -170,4 +164,17 @@ pub async fn run_open_task(open_args: &OpenArgs, project_path: &Path) {
     } else {
         open_in_vs_code(&[project_path]).await;
     }
+}
+
+pub async fn run_init_task(init_args: &InitArgs, base_path: &Path) -> Result<()> {
+    let project_name = init_args.project_name.clone().unwrap();
+    let project_path = base_path.join(&project_name);
+
+    info!("\nCreating new project at: {}", project_path.display());
+
+    write_embedded_dir(&TEMPLATE_DIR, project_path).await?;
+
+    info!("\nSuccessfully created: {}", project_name);
+
+    Ok(())
 }

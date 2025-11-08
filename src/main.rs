@@ -4,24 +4,23 @@ use dialoguer::theme::ColorfulTheme;
 use dialoguer::{Confirm, Select};
 use directories::BaseDirs;
 use itertools::Itertools;
+use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::{fs, process};
 use strum::VariantArray;
 
-use crate::commands::args::populate_arguments;
-use crate::commands::*;
-use crate::tasks::*;
-use crate::util::{get_cache_path, log_error, log_info, log_warning};
+use crate::runner::cli::Task;
+use crate::runner::*;
+use crate::util::{get_cache_path, wait_for_input_if_standalone};
 
-pub mod commands;
 pub mod config;
-pub mod dist;
+pub mod distribute;
 pub mod find;
 pub mod glossary;
-pub mod pandoc;
+pub mod init;
 pub mod replace;
-pub mod tasks;
+pub mod runner;
 pub mod util;
 
 async fn run_app(cli: Cli) -> Result<()> {
@@ -43,7 +42,7 @@ async fn run_app(cli: Cli) -> Result<()> {
                 base_path.display()
             );
         }
-        log_info(format!("✅ Using project from argument: {}", project_name));
+        info!("✅ Using project from argument: {}", project_name);
         Some(project_name)
     } else {
         None
@@ -77,10 +76,15 @@ async fn handle_task(
     base_path: impl AsRef<Path>,
     project: Option<impl AsRef<Path>>,
 ) -> Result<()> {
+    populate_arguments(task)?;
+
     // First run tasks that don't need project path.
     match task {
         Command::Internal => {
             return run_internal_task().await;
+        }
+        Command::Init(args) => {
+            return run_init_task(args, base_path.as_ref()).await;
         }
         _ => {}
     }
@@ -91,8 +95,6 @@ async fn handle_task(
         let project = select_project(&base_path)?;
         base_path.as_ref().join(project)
     };
-
-    populate_arguments(task)?;
 
     match task {
         Command::Glossary => run_glossary_task(&project_path).await?,
@@ -106,7 +108,7 @@ async fn handle_task(
         Command::Open(args) => {
             run_open_task(args, &project_path).await;
         }
-        Command::Internal /* | Command::Help */ => {
+        Command::Internal | Command::Init(_) => {
             unreachable!("Pathless commands should have been handled by the guard match")
         }
     }
@@ -120,15 +122,15 @@ fn select_project(base_path: impl AsRef<Path>) -> Result<String> {
 
     if projects.len() == 1 {
         let project_name = projects.first().unwrap().clone();
-        log_info(format!(
+        info!(
             "\n✅ Only one project found. Auto-selecting: {}",
             project_name
-        ));
+        );
 
         if let Err(e) = write_cache(Cache {
             last_project: project_name.clone(),
         }) {
-            log_warning(format!("Warning: Could not write to cache file: {}", e));
+            warn!("Warning: Could not write to cache file: {}", e);
         }
 
         return Ok(project_name);
@@ -146,7 +148,7 @@ fn select_project(base_path: impl AsRef<Path>) -> Result<String> {
                 .context("Failed to render confirmation prompt")?;
 
             if use_last {
-                log_info(format!("\n✅ Using cached project: {}\n", &last_project));
+                info!("\n✅ Using cached project: {}\n", &last_project);
                 return Ok(last_project);
             }
         }
@@ -164,7 +166,7 @@ fn select_project(base_path: impl AsRef<Path>) -> Result<String> {
     if let Err(e) = write_cache(Cache {
         last_project: selected_project.clone(),
     }) {
-        log_warning(format!("Warning: Could not write to cache file: {}", e));
+        warn!("Warning: Could not write to cache file: {}", e);
     }
 
     Ok(selected_project)
@@ -228,8 +230,17 @@ fn get_projects(base_path: &Path) -> Result<Vec<String>> {
 async fn main() {
     let cli = Cli::parse();
 
+    env_logger::Builder::new()
+        .filter_level(cli.verbose.log_level_filter())
+        .format_timestamp(None)
+        .format_file(false)
+        .format_module_path(false)
+        .init();
+
     if let Err(e) = run_app(cli).await {
-        log_error(format!("Error: {}", e));
+        error!("{}", e);
         process::exit(1);
     }
+
+    wait_for_input_if_standalone().await;
 }

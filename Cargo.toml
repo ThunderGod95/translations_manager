@@ -13,7 +13,6 @@ anyhow = "1.0.100"
 chrono = "0.4.42"
 clap = { version = "4.5.51", features = ["derive", "wrap_help", "string"] }
 clipboard-win = "5.4.1"
-console = "0.16.1"
 dialoguer = { version = "0.12.0", features = ["completion", "history"] }
 directories = "6.0.0"
 itertools = "0.14.0"
@@ -30,9 +29,17 @@ strum = { version = "0.27.2", features = ["derive"] }
 toml = "0.9.8"
 unicode-normalization = "0.1.25"
 path-clean = "1.0.1"
-duct = "1.1.0"
 tokio = { version = "1.48.0", features = ["full"] }
 futures = "0.3.31"
+terminal_size = "0.4.3"
+textwrap = "0.16.2"
+log = "0.4.28"
+env_logger = { version = "0.11.8", features = ["color"] }
+clap-verbosity-flag = "3.0.4"
+include_dir = "0.7.4"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_System_Console"] }
 
 [profile.release]
 opt-level = "z"

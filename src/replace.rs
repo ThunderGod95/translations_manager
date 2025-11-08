@@ -1,13 +1,12 @@
 use anyhow::{Context, Result};
 use futures::future::join_all;
+use log::{error, info};
 use regex::{Captures, Regex};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
 use tokio::fs;
-
-use crate::util::{log_error, log_info};
 
 pub fn replace(search_regex: &Regex, replacement: &str, haystack: &str) -> (String, usize) {
     let mut count = 0;
@@ -28,7 +27,7 @@ async fn process_file(
     let content = match fs::read_to_string(&file_path).await {
         Ok(content) => content,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            log_info(format!("Skipping file {}: Not found.", file_path.display()));
+            info!("Skipping file {}: Not found.", file_path.display());
             return Ok((file_path, 0));
         }
         Err(e) => {
@@ -43,11 +42,11 @@ async fn process_file(
             .await
             .with_context(|| format!("Failed to write changes to file: {}", file_path.display()))?;
 
-        log_info(format!(
+        info!(
             "Updated {} ({} replacements)",
             file_path.file_name().unwrap().display(),
             count
-        ));
+        );
     }
 
     Ok((file_path, count))
@@ -90,11 +89,11 @@ pub async fn replace_in_folder(
         let file_type = match entry.file_type().await {
             Ok(ft) => ft,
             Err(e) => {
-                log_error(format!(
+                error!(
                     "Could not determine file type for {}: {}. Skipping.",
                     path.display(),
                     e
-                ));
+                );
                 continue;
             }
         };
@@ -115,13 +114,13 @@ pub async fn replace_in_folder(
     for result in results {
         match result {
             Err(join_err) => {
-                log_error(format!(
+                error!(
                     "A file processing task failed unexpectedly (panicked): {}",
                     join_err
-                ));
+                );
             }
             Ok(Err(proc_err)) => {
-                log_error(format!("Failed to process file: {:#}", proc_err));
+                error!("Failed to process file: {:#}", proc_err);
             }
             Ok(Ok((_path, count))) => {
                 total_replacements += count;
