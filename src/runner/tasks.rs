@@ -9,6 +9,7 @@ use std::{
 use anyhow::{Result, anyhow};
 use futures::future::join_all;
 use log::{error, info, warn};
+use strum::VariantArray;
 
 use super::cli::{FindArgs, InitArgs, OpenArgs, ReplaceArgs};
 use crate::{
@@ -110,9 +111,9 @@ pub async fn run_dist_task(args: &DistArgs, project_path: &Path) -> Result<()> {
 
     let formats_to_build = if args.txt {
         warn!("Distributing as TXT. Disabling other formats...");
-        vec![DistributionFormat::TXT]
+        &[DistributionFormat::TXT]
     } else {
-        vec![DistributionFormat::PDF, DistributionFormat::EPUB]
+        DistributionFormat::VARIANTS
     };
 
     let dist_tasks = formats_to_build

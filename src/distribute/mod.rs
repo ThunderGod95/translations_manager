@@ -6,7 +6,7 @@ use futures::future::join_all;
 use log::{error, info};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use strum::Display;
+use strum::{Display, VariantArray};
 use tokio::fs::{self, create_dir_all, read_to_string, remove_dir_all};
 
 use crate::config::get_config;
@@ -41,7 +41,7 @@ impl VolumeInfo {
     }
 }
 
-#[derive(Debug, Clone, Copy, Display, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Display, PartialEq, Eq, VariantArray)]
 pub enum DistributionFormat {
     EPUB,
     PDF,
