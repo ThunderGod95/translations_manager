@@ -1,15 +1,15 @@
 mod pandoc;
 mod source;
 
-use crate::config::CONFIG;
-
 use anyhow::{Context, Result};
 use futures::future::join_all;
 use log::{error, info};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use strum::Display;
-use tokio::fs::{create_dir_all, read_to_string, remove_dir_all};
+use tokio::fs::{self, create_dir_all, read_to_string, remove_dir_all};
+
+use crate::config::get_config;
 
 use self::source::build_input;
 
@@ -45,6 +45,7 @@ impl VolumeInfo {
 pub enum DistributionFormat {
     EPUB,
     PDF,
+    TXT,
 }
 
 pub async fn distribute(
@@ -57,7 +58,7 @@ pub async fn distribute(
     let assets_dir = assets_dir.as_ref();
     let output_sub_dir = prepare_output_directory(&dist_dir, dist_format).await?;
 
-    let volumes = VolumeInfo::load(assets_dir.join(&CONFIG.sep_info_file)).await?;
+    let volumes = VolumeInfo::load(assets_dir.join(&get_config().await.sep_info_file)).await?;
 
     info!("Creating {}s... (Total: {})", dist_format, volumes.len());
 
@@ -94,7 +95,16 @@ async fn process_volume(
         output_file_name,
         dist_format.to_string().to_lowercase()
     ));
+
     let metadata = pandoc::build_metadata(&vol, &assets_dir)?;
+
+    let input = build_input(
+        &translations_dir,
+        &vol,
+        dist_format,
+        metadata.get_cover_image().as_deref(),
+    )
+    .await?;
 
     let args = pandoc::build_args(
         dist_format,
@@ -104,20 +114,11 @@ async fn process_volume(
         &output_file_path,
     )?;
 
-    let (total_files, input) = build_input(
-        &translations_dir,
-        &vol,
-        dist_format,
-        metadata.get_cover_image().as_deref(),
-    )
-    .await?;
-
-    info!(
-        "Successfully read and validated {} chapter files ({}...{}) for Vol. {}",
-        total_files, vol.file_start, vol.file_end, &vol.position
-    );
-
-    pandoc::run(args, input).await
+    if dist_format == DistributionFormat::TXT {
+        distribute_as_txt(input, output_file_path).await
+    } else {
+        pandoc::run(args, input).await
+    }
 }
 
 async fn prepare_output_directory(
@@ -173,4 +174,10 @@ fn log_errors(dist_format: DistributionFormat, results: Vec<Result<()>>) -> Resu
 
         Err(errors.remove(0))
     }
+}
+
+async fn distribute_as_txt(input: String, output_file: impl AsRef<Path>) -> Result<()> {
+    fs::write(output_file, input).await?;
+
+    Ok(())
 }

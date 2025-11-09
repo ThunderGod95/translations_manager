@@ -1,4 +1,3 @@
-// Declare the sub-modules
 mod chapter;
 mod data;
 mod text;
@@ -6,7 +5,6 @@ mod types;
 
 use std::{
     collections::{HashMap, HashSet},
-    fs::{File, read_to_string},
     path::{Path, PathBuf},
     time::Instant,
 };
@@ -16,10 +14,10 @@ use anyhow::{Context, Result};
 use clipboard_win::set_clipboard_string;
 use itertools::Itertools;
 use jieba_rs::Jieba;
-use log::{error, info};
-use rayon::prelude::*;
+use log::info;
+use tokio::fs::read_to_string;
 
-use crate::{config::CONFIG, util::*};
+use crate::{config::get_config, util::*};
 use chapter::*;
 use data::*;
 use text::*;
@@ -36,7 +34,10 @@ pub struct GlossaryProcessor {
 }
 
 impl GlossaryProcessor {
-    pub fn new(assets_path: impl AsRef<Path>, translations_path: impl AsRef<Path>) -> Result<Self> {
+    pub async fn new(
+        assets_path: impl AsRef<Path>,
+        translations_path: impl AsRef<Path>,
+    ) -> Result<Self> {
         let assets_path = assets_path.as_ref().to_owned();
         let translations_path = translations_path.as_ref().to_owned();
 
@@ -45,7 +46,7 @@ impl GlossaryProcessor {
         info!("Dictionary loaded.");
 
         info!("Loading glossary...");
-        let glossary_data = read_glossary(assets_path.join(&CONFIG.glossary_file))
+        let glossary_data = read_glossary(assets_path.join(&get_config().await.glossary_file))
             .context("Failed to read glossary file")?;
 
         info!("Preprocessing glossary...");
@@ -72,13 +73,16 @@ impl GlossaryProcessor {
     }
 
     pub async fn process_new_chapters(&self) -> Result<()> {
-        let chapter_file_path = self.assets_path.join(&CONFIG.chapter_file);
-        let chapter_file = read_to_string(chapter_file_path).context(format!(
+        let chapter_file_path = self.assets_path.join(&get_config().await.chapter_file);
+        let chapter_file = read_to_string(chapter_file_path).await.context(format!(
             "Failed to read chapter file: {}",
-            &CONFIG.chapter_file
+            &get_config().await.chapter_file
         ))?;
 
-        info!("Scanning for chapters in {}", &CONFIG.chapter_file);
+        info!(
+            "Scanning for chapters in {}",
+            &get_config().await.chapter_file
+        );
 
         let last_chapter_number = get_last_chapter_number(&self.translations_path)
             .context("Failed to get last chapter number")?;
@@ -99,7 +103,8 @@ impl GlossaryProcessor {
 
         let time = Instant::now();
 
-        let exact_matches = self.aho_corasick_find_all(&self.ac, &processed_chapter_text);
+        let exact_matches =
+            aho_corasick_find_all(&self.ac, &self.valid_clean_terms, &processed_chapter_text);
         info!(
             "Phase 1 (Chinese Exact): Found {} unique terms. [{}ms]",
             exact_matches.len(),
@@ -118,7 +123,7 @@ impl GlossaryProcessor {
             &self.jieba,
             &terms_for_fuzzy_match,
             &processed_chapter_text,
-            Some(CONFIG.fuzzy_search_threshold),
+            Some(get_config().await.fuzzy_search_threshold),
         );
         info!(
             "Phase 2 (Chinese Fuzzy): Found {} unique terms. [{}ms] ",
@@ -170,9 +175,12 @@ impl GlossaryProcessor {
             })
             .join("\n");
 
-        let prompt_template =
-            read_to_string(self.assets_path.join(&CONFIG.translation_prompt_file))
-                .context("Failed to read translation prompt file")?;
+        let prompt_template = read_to_string(
+            self.assets_path
+                .join(&get_config().await.translation_prompt_file),
+        )
+        .await
+        .context("Failed to read translation prompt file")?;
 
         let final_prompt_string = format!(
             "{}\n\n**Glossary**\n\n{}\n\n---\n\n**Chinese Chapter(s) to Translate:**\n{}",
@@ -204,62 +212,5 @@ impl GlossaryProcessor {
         println!("{}", separator);
 
         Ok(())
-    }
-
-    fn aho_corasick_find_all(&self, ac: &AhoCorasick, clean_text: &str) -> HashSet<String> {
-        let mut found_clean_terms = HashSet::new();
-
-        for mat in ac.find_iter(clean_text) {
-            let pattern_id = mat.pattern().as_usize();
-            let clean_term = self.valid_clean_terms[pattern_id].clone();
-            found_clean_terms.insert(clean_term);
-        }
-        found_clean_terms
-    }
-}
-
-fn chinese_fuzzy_search(
-    jieba: &Jieba,
-    terms: &[String],
-    text: &str,
-    threshold: Option<i32>,
-) -> HashSet<String> {
-    let threshold = threshold.unwrap_or(85);
-    let text_words: HashSet<&str> = jieba.cut(text, true).iter().copied().collect();
-
-    terms
-        .par_iter()
-        .filter_map(|clean_term| {
-            let is_match = text_words
-                .iter()
-                .any(|&word| calculate_similarity(clean_term, word) >= threshold);
-
-            if is_match {
-                Some(clean_term.clone())
-            } else {
-                None
-            }
-        })
-        .collect()
-}
-
-async fn create_and_open_files(paths: &[impl AsRef<Path>]) {
-    let mut paths_to_open: Vec<&Path> = Vec::with_capacity(paths.len());
-
-    for path_ref in paths {
-        let path = path_ref.as_ref();
-
-        match File::create(path) {
-            Ok(_) => {
-                paths_to_open.push(path);
-            }
-            Err(e) => {
-                error!("Failed to create/overwrite file {}: {}", path.display(), e);
-            }
-        }
-    }
-
-    if !paths_to_open.is_empty() {
-        open_in_vs_code(&paths_to_open).await;
     }
 }

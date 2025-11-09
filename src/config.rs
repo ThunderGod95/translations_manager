@@ -1,15 +1,20 @@
-use std::fs;
-
 use anyhow::Result;
-use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
+use tokio::fs;
+use tokio::sync::OnceCell;
 
 use crate::util::get_config_file_path;
 
 pub static PROJECT_PATH_QUALIFIERS: [&str; 3] = ["com", "tg", "tscripts"];
 
-pub static CONFIG: Lazy<AppConfig> =
-    Lazy::new(|| load_config().expect("Failed to load configuration"));
+static CONFIG: OnceCell<AppConfig> = OnceCell::const_new();
+
+/// Asynchronously gets the global application configuration.
+pub async fn get_config() -> &'static AppConfig {
+    CONFIG
+        .get_or_init(|| async { load_config().await.expect("Failed to load configuration") })
+        .await
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -42,17 +47,24 @@ impl Default for AppConfig {
     }
 }
 
-pub fn load_config() -> Result<AppConfig> {
-    let config_path = get_config_file_path()?;
+pub async fn load_config() -> Result<AppConfig> {
+    let config_path = get_config_file_path().await?;
 
-    if config_path.exists() {
-        let config_str = fs::read_to_string(config_path)?;
-        let config: AppConfig = toml::from_str(&config_str)?;
-        Ok(config)
-    } else {
-        let config = AppConfig::default();
-        let config_str = toml::to_string_pretty(&config)?;
-        fs::write(config_path, config_str)?;
-        Ok(config)
+    match fs::read_to_string(&config_path).await {
+        Ok(config_str) => {
+            let config: AppConfig = toml::from_str(&config_str)?;
+            Ok(config)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            println!(
+                "Config file not found, creating default at: {:?}",
+                config_path
+            );
+            let config = AppConfig::default();
+            let config_str = toml::to_string_pretty(&config)?;
+            fs::write(config_path, config_str).await?;
+            Ok(config)
+        }
+        Err(e) => Err(e.into()),
     }
 }

@@ -4,7 +4,7 @@ use clap::{Args, Parser, Subcommand};
 use clap_verbosity_flag::{InfoLevel, Verbosity};
 use strum::{Display, EnumString, VariantArray};
 
-#[derive(Parser)]
+#[derive(Parser, Debug, Clone)]
 #[command(
     version,
     about = "Tool for managing translation projects.",
@@ -57,20 +57,23 @@ pub enum Command {
 
     #[command(
         name = "distribute",
-        long_about = "Bundles up all translated chapters into EPUBs and PDFs by volumes (as specified in sep.json)."
+        long_about = "Bundles up all translated chapters into EPUBs and PDFs by volumes (as specified in sep.json) using pandoc."
     )]
-    Distribute,
+    Distribute(DistArgs),
 
-    #[command(name = "open", long_about = "Open specified chapter(s) in VS Code.")]
+    #[command(
+        name = "open",
+        long_about = "Open specified chapter(s) or project in VS Code."
+    )]
     Open(OpenArgs),
 
-    #[command(name = "init")]
+    #[command(name = "init", long_about = "Initialize a new translation project.")]
     Init(InitArgs),
 
     /// Edit Config files.
     #[command(
         name = "internal",
-        long_about = "Opens the internal config files in VS code for editing. Will fail if VS code is not installed."
+        long_about = "Opens the internal application config files in VS code for editing. Will fail if VS code is not installed."
     )]
     Internal,
 }
@@ -81,7 +84,7 @@ impl Command {
             Task::Glossary => Command::Glossary,
             Task::Find => Command::Find(FindArgs::default()),
             Task::Replace => Command::Replace(ReplaceArgs::default()),
-            Task::Distribute => Command::Distribute,
+            Task::Distribute => Command::Distribute(DistArgs::default()),
             Task::Open => Command::Open(OpenArgs::default()),
             Task::Init => Command::Init(InitArgs::default()),
             Task::Internal => Command::Internal,
@@ -124,6 +127,13 @@ pub struct ReplaceArgs {
     /// Treat the search pattern as a regular expression
     #[arg(required = false, short, long, action = clap::ArgAction::SetTrue)]
     pub regex: bool,
+}
+
+#[derive(Debug, Clone, Args, PartialEq, Eq, Default)]
+pub struct DistArgs {
+    /// Distribute as TXT. Specifying this option will disable generation of other formats.
+    #[arg(short, long, required = false)]
+    pub txt: bool,
 }
 
 #[derive(Debug, Clone, Args, PartialEq, Eq, Default)]

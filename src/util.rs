@@ -1,17 +1,19 @@
 use std::{
     ffi::{OsStr, OsString},
-    fs::{self},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use anyhow::Result;
 use directories::ProjectDirs;
 use log::{error, info, warn};
-use tokio::process::Command;
+use tokio::{
+    fs::{File, create_dir_all},
+    process::Command,
+};
 
-use crate::config::{CONFIG, PROJECT_PATH_QUALIFIERS};
+use crate::config::{PROJECT_PATH_QUALIFIERS, get_config};
 
-pub fn get_config_file_path() -> Result<PathBuf> {
+pub async fn get_config_file_path() -> Result<PathBuf> {
     let project_dirs = ProjectDirs::from(
         PROJECT_PATH_QUALIFIERS[0],
         PROJECT_PATH_QUALIFIERS[1],
@@ -20,11 +22,11 @@ pub fn get_config_file_path() -> Result<PathBuf> {
     .ok_or_else(|| anyhow::anyhow!("Could not determine project directories"))?;
 
     let config_dir = project_dirs.config_dir();
-    fs::create_dir_all(config_dir)?;
+    create_dir_all(config_dir).await?;
     Ok(config_dir.join("config.toml"))
 }
 
-pub fn get_cache_path() -> Result<PathBuf> {
+pub async fn get_cache_path() -> Result<PathBuf> {
     let project_dirs = ProjectDirs::from(
         PROJECT_PATH_QUALIFIERS[0],
         PROJECT_PATH_QUALIFIERS[1],
@@ -33,13 +35,13 @@ pub fn get_cache_path() -> Result<PathBuf> {
     .ok_or_else(|| anyhow::anyhow!("Could not determine project directories"))?;
 
     let path = project_dirs.cache_dir();
-    fs::create_dir_all(path)?;
+    create_dir_all(path).await?;
 
     // Use the filename from the loaded config
-    Ok(path.join(&CONFIG.cache_file))
+    Ok(path.join(&get_config().await.cache_file))
 }
 
-pub fn get_find_history_config_path() -> Result<PathBuf> {
+pub async fn get_find_history_config_path() -> Result<PathBuf> {
     let project_dirs = ProjectDirs::from(
         PROJECT_PATH_QUALIFIERS[0],
         PROJECT_PATH_QUALIFIERS[1],
@@ -48,14 +50,34 @@ pub fn get_find_history_config_path() -> Result<PathBuf> {
     .ok_or_else(|| anyhow::anyhow!("Could not determine project directories"))?;
 
     let path = project_dirs.cache_dir();
-    fs::create_dir_all(path)?;
+    create_dir_all(path).await?;
 
-    // Use the filename from the loaded config
-    Ok(path.join(&CONFIG.find_history_config_file))
+    Ok(path.join(&get_config().await.find_history_config_file))
 }
 
 pub fn normalize_path(path: impl AsRef<str>) -> String {
     path.as_ref().replace("\\", "/")
+}
+
+pub async fn create_and_open_files(paths: &[impl AsRef<Path>]) {
+    let mut paths_to_open: Vec<&Path> = Vec::with_capacity(paths.len());
+
+    for path_ref in paths {
+        let path = path_ref.as_ref();
+
+        match File::create(path).await {
+            Ok(_) => {
+                paths_to_open.push(path);
+            }
+            Err(e) => {
+                error!("Failed to create/overwrite file {}: {}", path.display(), e);
+            }
+        }
+    }
+
+    if !paths_to_open.is_empty() {
+        open_in_vs_code(&paths_to_open).await;
+    }
 }
 
 pub async fn open_in_vs_code(file_paths: &[impl AsRef<OsStr>]) {
@@ -114,33 +136,44 @@ pub async fn open_in_vs_code(file_paths: &[impl AsRef<OsStr>]) {
     }
 }
 
-/// Pauses for user input if the app is the only process
-/// attached to the console (i.e., was not run from an
-/// existing terminal).
-pub async fn wait_for_input_if_standalone() {
+/// Checks if the app is the only process attached to the console.
+pub fn is_standalone() -> bool {
     #[cfg(windows)]
     {
         use windows_sys::Win32::System::Console::GetConsoleProcessList;
         let mut process_list: [u32; 2] = [0; 2];
-
         let process_count = unsafe { GetConsoleProcessList(process_list.as_mut_ptr(), 2) };
 
-        if process_count == 1 {
-            use tokio::io::{AsyncBufReadExt, BufReader};
-
-            eprintln!("\nPress any key to close the window...");
-
-            let mut stdin = BufReader::new(tokio::io::stdin());
-            let mut _buffer = String::new();
-
-            let _ = stdin.read_line(&mut _buffer).await;
-        }
+        // If count is 1, we are standalone (e.g., double-clicked).
+        // If 0, no console (e.g., in background).
+        // If 2+, running from an existing terminal (e.g., cmd, powershell).
+        process_count == 1
     }
-
-    // Silence warnings on non-windows builds
     #[cfg(not(windows))]
     {
-        // No-op
-        let _ = tokio::time::sleep(std::time::Duration::from_millis(0));
+        // This feature is Windows-specific, so default to "not standalone"
+        // on other platforms, meaning it will always run once and exit.
+        false
+    }
+}
+
+/// Waits for user input to either re-run or quit.
+/// Returns `true` to re-run, `false` to quit.
+pub async fn prompt_for_rerun() -> bool {
+    eprintln!("\nPress 'Enter' to quit, or any other key to run again...");
+
+    let key_result = tokio::task::spawn_blocking(|| {
+        let term = console::Term::stdout();
+        term.read_key()
+    })
+    .await;
+
+    match key_result {
+        Ok(Ok(console::Key::Enter)) => false,
+        Ok(_) => true,
+        Err(e) => {
+            error!("Failed to read key: {}", e);
+            false
+        }
     }
 }

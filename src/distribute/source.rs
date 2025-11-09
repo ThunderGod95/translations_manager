@@ -4,6 +4,7 @@ use futures::{
     StreamExt, TryStreamExt,
     stream::{self, FuturesOrdered},
 };
+use log::info;
 use std::path::{Path, PathBuf};
 use tokio::fs::{metadata, read_to_string};
 
@@ -12,7 +13,7 @@ pub(super) async fn build_input(
     vol_info: &VolumeInfo,
     dist_format: DistributionFormat,
     normalized_cover_path: Option<&str>,
-) -> Result<(usize, String)> {
+) -> Result<String> {
     let input_dir = input_dir.as_ref();
     let cover_path = normalized_cover_path.map(Path::new);
 
@@ -46,7 +47,12 @@ pub(super) async fn build_input(
 
     let file_count = read_files(&file_paths, &mut final_content).await?;
 
-    Ok((file_count, final_content))
+    info!(
+        "Successfully read and validated {} chapter files ({}...{}) for Vol. {}",
+        file_count, vol_info.file_start, vol_info.file_end, &vol_info.position
+    );
+
+    Ok(final_content)
 }
 
 async fn collect_md_files(

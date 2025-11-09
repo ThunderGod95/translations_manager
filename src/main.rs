@@ -12,7 +12,7 @@ use strum::VariantArray;
 
 use crate::runner::cli::Task;
 use crate::runner::*;
-use crate::util::{get_cache_path, wait_for_input_if_standalone};
+use crate::util::{get_cache_path, is_standalone, prompt_for_rerun};
 
 pub mod config;
 pub mod distribute;
@@ -48,7 +48,7 @@ async fn run_app(cli: Cli) -> Result<()> {
         None
     };
 
-    let mut selected_task: Command = if let Some(command) = cli.command {
+    let selected_task: Command = if let Some(command) = cli.command {
         command
     } else {
         let task_index = Select::with_theme(&ColorfulTheme::default())
@@ -66,17 +66,17 @@ async fn run_app(cli: Cli) -> Result<()> {
         }
     };
 
-    handle_task(&mut selected_task, base_path, project).await?;
+    handle_task(selected_task, base_path, project).await?;
 
     Ok(())
 }
 
 async fn handle_task(
-    task: &mut Command,
+    task: Command,
     base_path: impl AsRef<Path>,
     project: Option<impl AsRef<Path>>,
 ) -> Result<()> {
-    populate_arguments(task)?;
+    let task = populate_arguments(task).await?;
 
     // First run tasks that don't need project path.
     match task {
@@ -84,7 +84,7 @@ async fn handle_task(
             return run_internal_task().await;
         }
         Command::Init(args) => {
-            return run_init_task(args, base_path.as_ref()).await;
+            return run_init_task(&args, base_path.as_ref()).await;
         }
         _ => {}
     }
@@ -92,21 +92,21 @@ async fn handle_task(
     let project_path = if let Some(project) = project {
         base_path.as_ref().join(project)
     } else {
-        let project = select_project(&base_path)?;
+        let project = select_project(&base_path).await?;
         base_path.as_ref().join(project)
     };
 
     match task {
         Command::Glossary => run_glossary_task(&project_path).await?,
         Command::Find(args) => {
-            run_find_task(args, &project_path).await?;
+            run_find_task(&args, &project_path).await?;
         }
         Command::Replace(args) => {
-            run_replace_task(args, &project_path).await?;
+            run_replace_task(&args, &project_path).await?;
         }
-        Command::Distribute => run_dist_task(&project_path).await?,
+        Command::Distribute(args) => run_dist_task(&args, &project_path).await?,
         Command::Open(args) => {
-            run_open_task(args, &project_path).await;
+            run_open_task(&args, &project_path).await;
         }
         Command::Internal | Command::Init(_) => {
             unreachable!("Pathless commands should have been handled by the guard match")
@@ -116,7 +116,7 @@ async fn handle_task(
     Ok(())
 }
 
-fn select_project(base_path: impl AsRef<Path>) -> Result<String> {
+async fn select_project(base_path: impl AsRef<Path>) -> Result<String> {
     let base_path = base_path.as_ref();
     let projects = get_projects(base_path)?;
 
@@ -129,14 +129,16 @@ fn select_project(base_path: impl AsRef<Path>) -> Result<String> {
 
         if let Err(e) = write_cache(Cache {
             last_project: project_name.clone(),
-        }) {
+        })
+        .await
+        {
             warn!("Warning: Could not write to cache file: {}", e);
         }
 
         return Ok(project_name);
     }
 
-    if let Some(cache) = read_cache()? {
+    if let Some(cache) = read_cache().await? {
         let last_project = cache.last_project;
 
         if projects.binary_search(&last_project).is_ok() {
@@ -165,7 +167,9 @@ fn select_project(base_path: impl AsRef<Path>) -> Result<String> {
 
     if let Err(e) = write_cache(Cache {
         last_project: selected_project.clone(),
-    }) {
+    })
+    .await
+    {
         warn!("Warning: Could not write to cache file: {}", e);
     }
 
@@ -178,8 +182,8 @@ struct Cache {
     last_project: String,
 }
 
-fn read_cache() -> Result<Option<Cache>> {
-    let cache_path = get_cache_path()?;
+async fn read_cache() -> Result<Option<Cache>> {
+    let cache_path = get_cache_path().await?;
     if !cache_path.exists() {
         return Ok(None);
     }
@@ -193,8 +197,8 @@ fn read_cache() -> Result<Option<Cache>> {
     Ok(Some(cache))
 }
 
-fn write_cache(cache: Cache) -> Result<()> {
-    let cache_path = get_cache_path()?;
+async fn write_cache(cache: Cache) -> Result<()> {
+    let cache_path = get_cache_path().await?;
     let j = serde_json::to_string_pretty(&cache).context("Failed to serialize cache")?;
 
     fs::write(&cache_path, j)
@@ -237,10 +241,26 @@ async fn main() {
         .format_module_path(false)
         .init();
 
-    if let Err(e) = run_app(cli).await {
-        error!("{}", e);
-        process::exit(1);
-    }
+    let standalone = is_standalone();
 
-    wait_for_input_if_standalone().await;
+    let mut run_result = run_app(cli.clone()).await;
+
+    if standalone {
+        loop {
+            if let Err(e) = run_result {
+                error!("{}", e);
+            }
+
+            if !prompt_for_rerun().await {
+                break;
+            }
+
+            run_result = run_app(cli.clone()).await;
+        }
+    } else {
+        if let Err(e) = run_result {
+            error!("{}", e);
+            process::exit(1);
+        }
+    }
 }

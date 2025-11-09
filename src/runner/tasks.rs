@@ -8,24 +8,27 @@ use std::{
 
 use anyhow::{Result, anyhow};
 use futures::future::join_all;
-use log::{error, info};
+use log::{error, info, warn};
 
 use super::cli::{FindArgs, InitArgs, OpenArgs, ReplaceArgs};
 use crate::{
-    config::CONFIG,
+    config::get_config,
     distribute::{DistributionFormat, distribute},
     find::{FormatOption, find_single_in_folder, format_folder_matches},
     glossary::GlossaryProcessor,
     init::{TEMPLATE_DIR, write_embedded_dir},
     replace::replace_in_folder,
+    runner::cli::DistArgs,
     util::{get_cache_path, get_config_file_path, open_in_vs_code},
 };
 
 pub async fn run_glossary_task(project_path: &PathBuf) -> Result<()> {
-    let assets_path = project_path.join(&CONFIG.assets_folder);
-    let translations_path = project_path.join(&CONFIG.translations_folder);
+    let config = get_config().await;
 
-    let glossary_processor = GlossaryProcessor::new(assets_path, translations_path)?;
+    let assets_path = project_path.join(&config.assets_folder);
+    let translations_path = project_path.join(&config.translations_folder);
+
+    let glossary_processor = GlossaryProcessor::new(assets_path, translations_path).await?;
 
     glossary_processor.process_new_chapters().await?;
 
@@ -42,7 +45,7 @@ pub async fn run_find_task(args: &FindArgs, project_path: &PathBuf) -> Result<()
         silent,
     } = args;
 
-    let folder_path = project_path.join(&CONFIG.translations_folder);
+    let folder_path = project_path.join(&get_config().await.translations_folder);
     let search_pattern = pattern.as_ref().unwrap();
     let write_path = write_path.as_ref();
 
@@ -88,22 +91,29 @@ pub async fn run_find_task(args: &FindArgs, project_path: &PathBuf) -> Result<()
 }
 
 pub async fn run_internal_task() -> Result<()> {
-    let config_path = get_config_file_path()?;
-    let cache_path = get_cache_path()?;
+    let config_path = get_config_file_path().await?;
+    let cache_path = get_cache_path().await?;
 
     open_in_vs_code(&[config_path, cache_path]).await;
 
     Ok(())
 }
 
-pub async fn run_dist_task(project_path: &Path) -> Result<()> {
+pub async fn run_dist_task(args: &DistArgs, project_path: &Path) -> Result<()> {
     info!("Running 'distribute' on {}", project_path.display());
 
-    let translations_dir = project_path.join(&CONFIG.translations_folder);
-    let assets_dir = project_path.join(&CONFIG.assets_folder);
-    let dist_dir = project_path.join(&CONFIG.dist_folder);
+    let config = get_config().await;
 
-    let formats_to_build = [DistributionFormat::PDF, DistributionFormat::EPUB];
+    let translations_dir = project_path.join(&config.translations_folder);
+    let assets_dir = project_path.join(&config.assets_folder);
+    let dist_dir = project_path.join(&config.dist_folder);
+
+    let formats_to_build = if args.txt {
+        warn!("Distributing as TXT. Disabling other formats...");
+        vec![DistributionFormat::TXT]
+    } else {
+        vec![DistributionFormat::PDF, DistributionFormat::EPUB]
+    };
 
     let dist_tasks = formats_to_build
         .iter()
@@ -132,7 +142,7 @@ pub async fn run_replace_task(replace_args: &ReplaceArgs, project_path: &Path) -
         .as_deref()
         .ok_or_else(|| anyhow!("Missing required 'new' argument"))?;
 
-    let translations_dir = project_path.join(&CONFIG.translations_folder);
+    let translations_dir = project_path.join(&get_config().await.translations_folder);
 
     let (total_replacements, total_files_updated) =
         replace_in_folder(translations_dir, old_text, new_text, *regex).await?;
@@ -150,12 +160,14 @@ pub async fn run_replace_task(replace_args: &ReplaceArgs, project_path: &Path) -
 pub async fn run_open_task(open_args: &OpenArgs, project_path: &Path) {
     let chapter_nos = open_args.files.as_ref();
 
+    let config = get_config().await;
+
     if let Some(chapter_nos) = chapter_nos {
         let chapter_paths: Vec<_> = chapter_nos
             .iter()
             .map(|no| {
                 project_path
-                    .join(&CONFIG.translations_folder) // Default is "translations"
+                    .join(&config.translations_folder)
                     .join(format!("{}.md", no))
             })
             .collect();

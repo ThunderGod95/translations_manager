@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use dialoguer::{Confirm, History, Input, theme::ColorfulTheme};
@@ -6,20 +6,32 @@ use dialoguer::{Confirm, History, Input, theme::ColorfulTheme};
 use super::cli::{Command, FindArgs, InitArgs, ReplaceArgs};
 use crate::{runner::interactive::histories::FindHistory, util::get_find_history_config_path};
 
-pub fn populate_arguments(command: &mut Command) -> Result<()> {
-    match command {
-        Command::Glossary => Ok(()),
-        Command::Internal => Ok(()),
-        Command::Distribute => Ok(()),
-        Command::Open(_) => Ok(()),
-        Command::Find(find_args) => populate_find_arguments(find_args),
-        Command::Replace(replace_args) => populate_replace_arguments(replace_args),
-        Command::Init(init_args) => populate_init_arguments(init_args),
-    }
+pub async fn populate_arguments(mut command: Command) -> Result<Command> {
+    let history_path = get_find_history_config_path().await?;
+
+    command = tokio::task::spawn_blocking(move || {
+        match &mut command {
+            Command::Glossary => Ok(()),
+            Command::Internal => Ok(()),
+            Command::Distribute(_) => Ok(()),
+            Command::Open(_) => Ok(()),
+            Command::Find(find_args) => populate_find_arguments(find_args, &history_path),
+            Command::Replace(replace_args) => populate_replace_arguments(replace_args),
+            Command::Init(init_args) => populate_init_arguments(init_args),
+        }?;
+
+        Ok::<_, anyhow::Error>(command)
+    })
+    .await??;
+
+    Ok(command)
 }
 
-pub fn populate_find_arguments(find_args: &mut FindArgs) -> Result<()> {
-    let mut history = FindHistory::load(get_find_history_config_path()?, 20);
+pub fn populate_find_arguments(
+    find_args: &mut FindArgs,
+    history_path: impl AsRef<Path>,
+) -> Result<()> {
+    let mut history = FindHistory::load(history_path, 20);
 
     if let Some(pattern) = &find_args.pattern {
         history.write(pattern);
@@ -142,7 +154,7 @@ mod histories {
         collections::VecDeque,
         fs::{File, OpenOptions},
         io::{self, BufRead, BufReader, Write},
-        path::PathBuf,
+        path::{Path, PathBuf},
     };
 
     use dialoguer::History;
@@ -154,7 +166,9 @@ mod histories {
     }
 
     impl FindHistory {
-        pub fn load(path: PathBuf, max: usize) -> Self {
+        pub fn load(path: impl AsRef<Path>, max: usize) -> Self {
+            let path = path.as_ref().to_path_buf();
+
             let history = if let Ok(file) = File::open(&path) {
                 let reader = BufReader::new(file);
                 reader

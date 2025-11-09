@@ -100,7 +100,7 @@ pub async fn replace_in_folder(
 
         if file_type.is_file() {
             tasks.push(tokio::spawn(process_file(
-                path, // Pass the owned PathBuf
+                path,
                 Arc::clone(&search_regex),
                 Arc::clone(&replacement),
             )));

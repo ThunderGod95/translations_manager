@@ -1498,6 +1498,7 @@ dependencies = [
  "clap",
  "clap-verbosity-flag",
  "clipboard-win",
+ "console",
  "dialoguer",
  "directories",
  "env_logger",
