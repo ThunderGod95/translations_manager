@@ -3,6 +3,8 @@ mod data;
 mod text;
 mod types;
 
+pub use chapter::get_last_chapter_number;
+
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},

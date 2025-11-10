@@ -14,8 +14,6 @@ pub struct GlossaryEntry {
 #[derive(Debug, PartialEq, Eq)]
 pub struct Chapter {
     pub expected_number: usize,
-    pub original_number: usize,
     pub expected_title: String,
-    pub original_title: String,
     pub text: String,
 }

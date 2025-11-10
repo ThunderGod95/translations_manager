@@ -6,18 +6,22 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{Result, anyhow};
-use dialoguer::{Select, theme::ColorfulTheme};
+use anyhow::{Result, anyhow, bail};
+use dialoguer::{Input, Select, theme::ColorfulTheme};
 use futures::future::join_all;
 use log::{error, info, warn};
 use strum::VariantArray;
+use tokio::{
+    fs::{self, metadata},
+    io::{self, AsyncWriteExt},
+};
 
 use super::cli::{FindArgs, InitArgs, OpenArgs, ReplaceArgs};
 use crate::{
     config::get_config,
     distribute::{DistributionFormat, distribute},
     find::{FormatOption, find_single_in_folder, format_folder_matches},
-    glossary::GlossaryProcessor,
+    glossary::{GlossaryProcessor, get_last_chapter_number},
     init::{TEMPLATE_DIR, write_embedded_dir},
     projects::select_project,
     replace::replace_in_folder,
@@ -218,6 +222,55 @@ pub async fn run_scraping_task(projects_dir: &Path) -> Result<()> {
     } else {
         return Err(anyhow!("No scraping target selected. Exiting."));
     }
+
+    Ok(())
+}
+
+pub async fn run_next_task(project_path: &Path) -> Result<()> {
+    let config = get_config().await;
+    let raws_dir_name = &config.raws_folder;
+    let raws_dir = project_path.join(raws_dir_name);
+
+    if metadata(&raws_dir).await.is_err() {
+        bail!(
+            "No `{}` present in `{}`\n\nPlease use `glossary` command directly with chapter content pasted into `{}`",
+            raws_dir_name,
+            project_path.display(),
+            &config.chapter_file
+        );
+    }
+
+    let last_chapter_number =
+        get_last_chapter_number(project_path.join(&config.translations_folder))?;
+
+    let new_chapters = tokio::task::spawn_blocking(|| {
+        Input::with_theme(&ColorfulTheme::default())
+            .with_prompt("How many chapters to copy?")
+            .allow_empty(false)
+            .default(2)
+            .interact_text()
+    })
+    .await??;
+
+    let chapter_range_start = last_chapter_number + 1;
+    let chapter_range_end = last_chapter_number + new_chapters;
+
+    let cr_ch_txt_path = project_path
+        .join(&config.assets_folder)
+        .join(&config.chapter_file);
+    let cr_ch_txt_file = fs::File::create(cr_ch_txt_path).await?;
+    let mut writer = io::BufWriter::new(cr_ch_txt_file);
+
+    for ch in chapter_range_start..=chapter_range_end {
+        let ch_file = fs::read_to_string(raws_dir.join(format!("{}.md", ch))).await?;
+
+        writer.write_all(ch_file.as_bytes()).await?;
+        writer.write_all(b"\n\n").await?;
+    }
+
+    writer.flush().await?;
+
+    run_glossary_task(&project_path.to_path_buf()).await?;
 
     Ok(())
 }

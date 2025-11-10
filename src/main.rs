@@ -10,7 +10,6 @@ use strum::VariantArray;
 
 use crate::projects::*;
 use crate::runner::cli::Task;
-use crate::runner::tasks::run_scraping_task;
 use crate::runner::*;
 use crate::util::{is_standalone, prompt_for_rerun};
 
@@ -114,6 +113,7 @@ async fn handle_task(
         Command::Open(args) => {
             run_open_task(&args, &project_path).await;
         }
+        Command::Next => run_next_task(&project_path).await?,
         Command::Internal | Command::Init(_) | Command::Scrape => {
             unreachable!("Pathless commands should have been handled by the guard match")
         }

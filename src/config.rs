@@ -21,6 +21,7 @@ pub struct AppConfig {
     pub translations_folder: String,
     pub assets_folder: String,
     pub dist_folder: String,
+    pub raws_folder: String,
     pub glossary_file: String,
     pub chapter_file: String,
     pub translation_prompt_file: String,
@@ -43,6 +44,7 @@ impl Default for AppConfig {
             translations_folder: "translations".to_string(),
             assets_folder: "assets".to_string(),
             dist_folder: "dist".to_string(),
+            raws_folder: "raws".to_string(),
         }
     }
 }

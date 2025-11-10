@@ -19,6 +19,7 @@ pub async fn populate_arguments(mut command: Command) -> Result<Command> {
             Command::Replace(replace_args) => populate_replace_arguments(replace_args),
             Command::Init(init_args) => populate_init_arguments(init_args),
             Command::Scrape => Ok(()),
+            Command::Next => Ok(()),
         }?;
 
         Ok::<_, anyhow::Error>(command)

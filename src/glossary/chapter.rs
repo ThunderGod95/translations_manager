@@ -1,14 +1,14 @@
 use std::{fs::read_dir, path::Path};
 
 use anyhow::Result;
-use log::{error, info, warn};
+use log::{info, warn};
 use once_cell::sync::Lazy;
 use regex::Regex;
 
 use super::Chapter;
 
 static RE_SPLITTER: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?m)^第").unwrap());
-static RE_PARSER: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?s)^(\d+)章([^\n\r]*)(.*)").unwrap());
+static RE_PARSER: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?s)^.+章([^\n\r]*)(.*)").unwrap());
 
 pub fn process_chapters<'a>(cr_ch_text: &'a str, last_chapter_number: usize) -> Vec<Chapter> {
     let chunks: Vec<_> = RE_SPLITTER.split(cr_ch_text.trim()).skip(1).collect();
@@ -20,7 +20,7 @@ pub fn process_chapters<'a>(cr_ch_text: &'a str, last_chapter_number: usize) -> 
 
     info!("Found {} potential chapter(s).", chunks.len());
 
-    let mut expected_chapter_number = last_chapter_number + 1;
+    let mut expected_number = last_chapter_number + 1;
     let mut processed_chapters: Vec<Chapter> = Vec::with_capacity(chunks.len());
 
     for chunk in chunks.into_iter() {
@@ -29,60 +29,24 @@ pub fn process_chapters<'a>(cr_ch_text: &'a str, last_chapter_number: usize) -> 
             continue;
         };
 
-        let Some(num_match) = cap.get(1) else {
-            continue;
-        };
+        let title_text = cap.get(1).map_or("", |m| m.as_str().trim());
+        let original_content = cap.get(2).map_or("", |m| m.as_str());
 
-        let Ok(actual_chapter_number) = num_match.as_str().parse::<usize>() else {
-            let first_line = chunk.lines().next().unwrap_or("").trim();
-            let preview: String = first_line.chars().take(150).collect();
+        info!("Processing Chapter {}: {}", expected_number, title_text);
 
-            error!(
-                "Failed to parse chapter chunk. Skipping... Chunk starts with: '{}...'",
-                preview
-            );
-            continue;
-        };
-
-        let title_text = cap.get(2).map_or("", |m| m.as_str().trim());
-        let original_content = cap.get(3).map_or("", |m| m.as_str());
-
-        info!(
-            "Processing chapter {} (expected {}): {}",
-            actual_chapter_number, expected_chapter_number, title_text
-        );
-
-        let original_title = format!("第{}章 {}", actual_chapter_number, title_text)
+        let expected_title = format!("第{}章 {}", expected_number, title_text)
             .trim_end()
             .to_string();
-
-        let (current_chapter_number, expected_title) =
-            if actual_chapter_number != expected_chapter_number {
-                warn!(
-                    "Chapter number mismatch. Found {}, expected {}.",
-                    actual_chapter_number, expected_chapter_number
-                );
-
-                let expected_title = format!("第{}章 {}", expected_chapter_number, title_text)
-                    .trim_end()
-                    .to_string();
-
-                (expected_chapter_number, expected_title)
-            } else {
-                (actual_chapter_number, original_title.clone())
-            };
 
         let chapter_text = format!("{}\n{}", expected_title, original_content);
 
         processed_chapters.push(Chapter {
-            expected_number: current_chapter_number,
-            original_number: actual_chapter_number,
+            expected_number,
             expected_title,
-            original_title,
             text: chapter_text,
         });
 
-        expected_chapter_number = current_chapter_number + 1;
+        expected_number += 1;
     }
 
     processed_chapters

@@ -76,6 +76,12 @@ and available in the system's PATH."
     )]
     Internal,
 
+    #[command(
+        name = "next",
+        long_about = "Copied a specified number of raw chapters files to cr_ch.txt if `raws` is present and then runs `glossary` command."
+    )]
+    Next,
+
     /// 📖 Open project files or chapters in VS Code
     #[command(
         name = "open",
@@ -114,6 +120,7 @@ impl Command {
             Task::Init => Command::Init(InitArgs::default()),
             Task::Internal => Command::Internal,
             Task::Scrape => Command::Scrape,
+            Task::Next => Command::Next,
         }
     }
 }
@@ -185,6 +192,7 @@ pub enum Task {
     Distribute,
     /// The chapter opening task
     Open,
+    Next,
     Init,
     /// Editing the config task
     Internal,
