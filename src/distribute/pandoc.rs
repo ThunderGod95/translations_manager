@@ -7,6 +7,7 @@ use path_clean::PathClean;
 use std::fmt::Display;
 use std::path::Path;
 use std::process::Stdio;
+use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
@@ -22,6 +23,17 @@ impl PandocArgs {
     pub fn include_in_header(&mut self, header: impl AsRef<Path>) -> &mut Self {
         self.0.push("--include-in-header".to_string());
         self.0.push(header.as_ref().display().to_string());
+        self
+    }
+
+    pub fn embed_font(&mut self, font: impl AsRef<Path>) -> &mut Self {
+        self.0
+            .push(format!("--epub-embed-font={}", font.as_ref().display()));
+        self
+    }
+
+    pub fn embed_css(&mut self, css: impl AsRef<Path>) -> &mut Self {
+        self.0.push(format!("--css={}", css.as_ref().display()));
         self
     }
 
@@ -136,16 +148,16 @@ pub(super) fn build_metadata(
     Ok(pandoc_metadata)
 }
 
-pub(super) fn build_args(
+pub(super) async fn build_args(
     dist_format: DistributionFormat,
     metadata: &PandocMetadata,
     translations_dir: impl AsRef<Path>,
     assets_dir: impl AsRef<Path>,
     output_path: impl AsRef<Path>,
 ) -> Result<PandocArgs> {
-    let translations_dir = translations_dir.as_ref().display().to_string();
+    let translations_dir = translations_dir.as_ref();
     let assets_dir = assets_dir.as_ref();
-    let output_path = output_path.as_ref().display().to_string();
+    let output_path = output_path.as_ref();
 
     let mut pandoc_args = PandocArgs::default();
 
@@ -153,43 +165,24 @@ pub(super) fn build_args(
         .push_arg("--from")
         .push_arg("markdown-yaml_metadata_block-multiline_tables")
         .push_arg("--resource-path")
-        .push_arg(normalize_path(translations_dir))
+        .push_arg(normalize_path(translations_dir.display().to_string()))
         .push_arg("--resource-path")
         .push_arg(normalize_path(assets_dir.display().to_string()))
         .push_arg("-o")
-        .push_arg(normalize_path(output_path))
+        .push_arg(normalize_path(output_path.display().to_string()))
         .push_arg("--toc")
         .push_arg("--top-level-division=chapter");
 
     pandoc_args.set_variable("documentclass", "scrbook");
 
-    if dist_format == DistributionFormat::PDF {
-        pandoc_args.set_pdf_engine("xelatex");
-        let pdf_style_path = assets_dir.join("dist").join("style.tex");
-
-        if pdf_style_path.exists() {
-            info!("Found PDF styles. Applying them...");
-            pandoc_args.include_in_header(pdf_style_path);
-        } else {
-            warn!("PDF styles not found. Applying default styles...");
-            pandoc_args
-                .set_variable("linestretch", "1.25")
-                .set_variable("geometry", "margin=1.2in")
-                .set_variable("mainfont", "\"Book Antiqua\"");
+    match dist_format {
+        DistributionFormat::PDF => {
+            apply_pdf_args(&mut pandoc_args, assets_dir).await?;
         }
-
-        pandoc_args
-            .set_variable("fontsize", "12pt")
-            .set_variable("classoption", "openany");
-    }
-
-    let normalized_cover_image = metadata.get_cover_image();
-
-    if dist_format == DistributionFormat::EPUB && normalized_cover_image.is_some() {
-        pandoc_args.push_arg(format!(
-            "--epub-cover-image={}",
-            normalized_cover_image.unwrap()
-        ));
+        DistributionFormat::EPUB => {
+            apply_epub_args(&mut pandoc_args, metadata, assets_dir).await?;
+        }
+        _ => {}
     }
 
     for arg in metadata.get_metadata_args() {
@@ -197,4 +190,63 @@ pub(super) fn build_args(
     }
 
     Ok(pandoc_args)
+}
+
+async fn apply_pdf_args(pandoc_args: &mut PandocArgs, assets_dir: &Path) -> Result<()> {
+    pandoc_args.set_pdf_engine("xelatex");
+
+    let pdf_style_path = assets_dir.join("dist").join("style.tex");
+
+    if fs::metadata(&pdf_style_path).await.is_ok() {
+        info!("Found PDF styles. Applying them...");
+
+        pandoc_args.include_in_header(pdf_style_path);
+    } else {
+        warn!("PDF styles not found. Applying default styles...");
+
+        pandoc_args
+            .set_variable("linestretch", "1.25")
+            .set_variable("geometry", "margin=1.2in")
+            .set_variable("mainfont", "\"Book Antiqua\"");
+    }
+
+    pandoc_args
+        .set_variable("fontsize", "12pt")
+        .set_variable("classoption", "openany");
+
+    Ok(())
+}
+
+async fn apply_epub_args(
+    pandoc_args: &mut PandocArgs,
+    metadata: &PandocMetadata,
+    assets_dir: &Path,
+) -> Result<()> {
+    let epub_dist_info = assets_dir.join("dist");
+
+    if fs::metadata(&epub_dist_info).await.is_ok() {
+        let mut entries = fs::read_dir(epub_dist_info).await?;
+
+        while let Some(entry) = entries.next_entry().await? {
+            let entry_path = entry.path();
+
+            if let Some(ex_str) = entry_path.extension().and_then(|s| s.to_str()) {
+                match ex_str {
+                    "css" => {
+                        pandoc_args.embed_css(entry_path);
+                    }
+                    "ttf" => {
+                        pandoc_args.embed_font(entry_path);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    if let Some(cover_image) = metadata.get_cover_image() {
+        pandoc_args.push_arg(format!("--epub-cover-image={}", cover_image));
+    }
+
+    Ok(())
 }

@@ -30,52 +30,77 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand, Clone, PartialEq, Eq)]
 pub enum Command {
-    /// Generate a micro-glossary for an untranslated chapter
-    #[command(
-        name = "glossary",
-        long_about = "Generates a micro-glossary based on words found in an untranslated \
-                      chapter. It copies the glossary, translation prompt, and chapter \
-                      content to the clipboard."
-    )]
-    Glossary,
-
-    /// Search translated chapters for a specific text pattern
-    #[command(
-        name = "find",
-        long_about = "Finds the first occurrence and all occurrences of a pattern (text or regex) \
-                      within a specified range of files."
-    )]
-    Find(FindArgs),
-
-    /// Find and replace a pattern in translated chapters
-    #[command(
-        name = "replace",
-        long_about = "Finds and replaces occurrences of a pattern (text or regex) \
-                      with new text within a specified range of files."
-    )]
-    Replace(ReplaceArgs),
-
+    /// 📚 Compile translated chapters into distributable formats (EPUB, PDF)
     #[command(
         name = "distribute",
-        long_about = "Bundles up all translated chapters into EPUBs and PDFs by volumes (as specified in sep.json) using pandoc."
+        long_about = "Compiles all translated chapters into final EPUB and PDF files.
+This command uses Pandoc to create book-like volumes, with chapter 
+separation defined in the 'sep.json' configuration file."
     )]
     Distribute(DistArgs),
 
+    /// 🔎 Search translated chapters for text or regex patterns
+    #[command(
+        name = "find",
+        long_about = "Searches for a text or regex pattern within a specified range of 
+translated chapter files. Reports the first occurrence and a total 
+count of all matches."
+    )]
+    Find(FindArgs),
+
+    /// 🖋️ Prepare an untranslated chapter for translation
+    #[command(
+        name = "glossary",
+        long_about = "Prepares the next untranslated chapter for translation by:
+1. Generating a micro-glossary from its content.
+2. Copying the glossary, translation prompt, and chapter text to the clipboard.
+3. Creating empty placeholder files for all other untranslated chapters."
+    )]
+    Glossary,
+
+    /// ✨ Initialize a new translation project directory
+    #[command(
+        name = "init",
+        long_about = "Sets up a new translation project in the current directory.
+This creates the necessary directory structure (e.g., 'source', 
+'translated') and default configuration files to get started."
+    )]
+    Init(InitArgs),
+
+    /// ⚙️ Edit internal application configuration files
+    #[command(
+        name = "internal",
+        long_about = "Opens the internal application configuration files in VS Code for 
+manual editing. This command requires VS Code to be installed 
+and available in the system's PATH."
+    )]
+    Internal,
+
+    /// 📖 Open project files or chapters in VS Code
     #[command(
         name = "open",
-        long_about = "Open specified chapter(s) or project in VS Code."
+        long_about = "Quickly opens specified chapter files (source or translated) or 
+the entire project root directory in Visual Studio Code."
     )]
     Open(OpenArgs),
 
-    #[command(name = "init", long_about = "Initialize a new translation project.")]
-    Init(InitArgs),
-
-    /// Edit Config files.
+    /// 🔁 Find and replace text or regex patterns in translated chapters
     #[command(
-        name = "internal",
-        long_about = "Opens the internal application config files in VS code for editing. Will fail if VS code is not installed."
+        name = "replace",
+        long_about = "Finds and replaces all occurrences of a pattern (text or regex) 
+with new text within a specified range of translated chapter files."
     )]
-    Internal,
+    Replace(ReplaceArgs),
+
+    /// 🌐 Scrape all chapters from a pre-defined target
+    #[command(
+        name = "scrape",
+        long_about = "Scrapes all chapters from an available, pre-defined target source.
+This is a standalone utility that operates independently and does 
+not work within an existing translation project. It is used to 
+gather the raw source material."
+    )]
+    Scrape,
 }
 
 impl Command {
@@ -88,6 +113,7 @@ impl Command {
             Task::Open => Command::Open(OpenArgs::default()),
             Task::Init => Command::Init(InitArgs::default()),
             Task::Internal => Command::Internal,
+            Task::Scrape => Command::Scrape,
         }
     }
 }
@@ -162,4 +188,6 @@ pub enum Task {
     Init,
     /// Editing the config task
     Internal,
+    /// Scraping task.
+    Scrape,
 }

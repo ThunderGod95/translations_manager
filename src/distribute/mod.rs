@@ -1,5 +1,5 @@
+mod input;
 mod pandoc;
-mod source;
 
 use anyhow::{Context, Result};
 use futures::future::join_all;
@@ -11,7 +11,7 @@ use tokio::fs::{self, create_dir_all, read_to_string, remove_dir_all};
 
 use crate::config::get_config;
 
-use self::source::build_input;
+use self::input::build_input;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VolumeInfo {
@@ -112,7 +112,8 @@ async fn process_volume(
         &translations_dir,
         &assets_dir,
         &output_file_path,
-    )?;
+    )
+    .await?;
 
     if dist_format == DistributionFormat::TXT {
         distribute_as_txt(input, output_file_path).await

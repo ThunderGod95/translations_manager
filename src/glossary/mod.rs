@@ -93,10 +93,12 @@ impl GlossaryProcessor {
         }
 
         let mut combined_chapter_text = String::new();
+
         for chapter in &chapters {
             combined_chapter_text.push_str(&chapter.text);
             combined_chapter_text.push_str("\n\n---\n\n");
         }
+
         let processed_chapter_text = preprocess_chinese_text(&combined_chapter_text);
 
         info!("Starting glossary search...");
@@ -132,6 +134,7 @@ impl GlossaryProcessor {
         );
 
         let mut all_found_terms = HashSet::new();
+
         all_found_terms.extend(exact_matches);
         all_found_terms.extend(fuzzy_matches);
 

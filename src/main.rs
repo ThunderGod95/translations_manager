@@ -1,26 +1,29 @@
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
+use dialoguer::Select;
 use dialoguer::theme::ColorfulTheme;
-use dialoguer::{Confirm, Select};
 use directories::BaseDirs;
-use itertools::Itertools;
-use log::{error, info, warn};
-use serde::{Deserialize, Serialize};
+use log::{error, info};
 use std::path::Path;
-use std::{fs, process};
+use std::process;
 use strum::VariantArray;
 
+use crate::projects::*;
 use crate::runner::cli::Task;
+use crate::runner::tasks::run_scraping_task;
 use crate::runner::*;
-use crate::util::{get_cache_path, is_standalone, prompt_for_rerun};
+use crate::util::{is_standalone, prompt_for_rerun};
 
+pub mod cache;
 pub mod config;
 pub mod distribute;
 pub mod find;
 pub mod glossary;
 pub mod init;
+pub mod projects;
 pub mod replace;
 pub mod runner;
+pub mod scraper;
 pub mod util;
 
 async fn run_app(cli: Cli) -> Result<()> {
@@ -34,7 +37,7 @@ async fn run_app(cli: Cli) -> Result<()> {
     };
 
     let project = if let Some(project_name) = cli.project {
-        let projects = get_projects(&base_path)?;
+        let projects = get_projects(&base_path).await?;
         if !projects.contains(&project_name) {
             bail!(
                 "Project '{}' not found in {}",
@@ -86,6 +89,9 @@ async fn handle_task(
         Command::Init(args) => {
             return run_init_task(&args, base_path.as_ref()).await;
         }
+        Command::Scrape => {
+            return run_scraping_task(&base_path.as_ref()).await;
+        }
         _ => {}
     }
 
@@ -108,126 +114,12 @@ async fn handle_task(
         Command::Open(args) => {
             run_open_task(&args, &project_path).await;
         }
-        Command::Internal | Command::Init(_) => {
+        Command::Internal | Command::Init(_) | Command::Scrape => {
             unreachable!("Pathless commands should have been handled by the guard match")
         }
     }
 
     Ok(())
-}
-
-async fn select_project(base_path: impl AsRef<Path>) -> Result<String> {
-    let base_path = base_path.as_ref();
-    let projects = get_projects(base_path)?;
-
-    if projects.len() == 1 {
-        let project_name = projects.first().unwrap().clone();
-        info!(
-            "\n✅ Only one project found. Auto-selecting: {}",
-            project_name
-        );
-
-        if let Err(e) = write_cache(Cache {
-            last_project: project_name.clone(),
-        })
-        .await
-        {
-            warn!("Warning: Could not write to cache file: {}", e);
-        }
-
-        return Ok(project_name);
-    }
-
-    if let Some(cache) = read_cache().await? {
-        let last_project = cache.last_project;
-
-        if projects.binary_search(&last_project).is_ok() {
-            let use_last = Confirm::with_theme(&ColorfulTheme::default())
-                .with_prompt(format!("Use last selected project: {}", &last_project))
-                .default(true)
-                .show_default(true)
-                .interact()
-                .context("Failed to render confirmation prompt")?;
-
-            if use_last {
-                info!("\n✅ Using cached project: {}\n", &last_project);
-                return Ok(last_project);
-            }
-        }
-    }
-
-    let project_index = Select::with_theme(&ColorfulTheme::default())
-        .with_prompt("Select a translation project:")
-        .items(&projects)
-        .default(0)
-        .interact()
-        .context("Failed to render selection prompt")?;
-
-    let selected_project = projects[project_index].clone();
-
-    if let Err(e) = write_cache(Cache {
-        last_project: selected_project.clone(),
-    })
-    .await
-    {
-        warn!("Warning: Could not write to cache file: {}", e);
-    }
-
-    Ok(selected_project)
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Cache {
-    #[serde(rename = "lastProject")]
-    last_project: String,
-}
-
-async fn read_cache() -> Result<Option<Cache>> {
-    let cache_path = get_cache_path().await?;
-    if !cache_path.exists() {
-        return Ok(None);
-    }
-
-    let cache_string = fs::read_to_string(&cache_path)
-        .with_context(|| format!("Failed to read cache file at {}", cache_path.display()))?;
-
-    let cache: Cache = serde_json::from_str(&cache_string)
-        .with_context(|| format!("Failed to parse cache file at {}", cache_path.display()))?;
-
-    Ok(Some(cache))
-}
-
-async fn write_cache(cache: Cache) -> Result<()> {
-    let cache_path = get_cache_path().await?;
-    let j = serde_json::to_string_pretty(&cache).context("Failed to serialize cache")?;
-
-    fs::write(&cache_path, j)
-        .with_context(|| format!("Failed to write cache file to {}", cache_path.display()))?;
-
-    Ok(())
-}
-
-fn get_projects(base_path: &Path) -> Result<Vec<String>> {
-    let projects: Vec<String> = fs::read_dir(base_path)
-        .with_context(|| format!("Failed to read projects from {}", base_path.display()))?
-        .filter_map(|entry_result| {
-            let entry = entry_result.ok()?;
-            let path = entry.path();
-
-            if !path.is_dir() || entry.file_name() == "tscripts" {
-                return None;
-            }
-
-            entry.file_name().into_string().ok()
-        })
-        .sorted()
-        .collect();
-
-    if projects.is_empty() {
-        bail!("No projects found in: {}", base_path.display());
-    }
-
-    Ok(projects)
 }
 
 #[tokio::main]

@@ -7,6 +7,7 @@ use std::{
 };
 
 use anyhow::{Result, anyhow};
+use dialoguer::{Select, theme::ColorfulTheme};
 use futures::future::join_all;
 use log::{error, info, warn};
 use strum::VariantArray;
@@ -18,8 +19,10 @@ use crate::{
     find::{FormatOption, find_single_in_folder, format_folder_matches},
     glossary::GlossaryProcessor,
     init::{TEMPLATE_DIR, write_embedded_dir},
+    projects::select_project,
     replace::replace_in_folder,
     runner::cli::DistArgs,
+    scraper::{ScrapingTarget, scraper2322424255},
     util::{get_cache_path, get_config_file_path, open_in_vs_code},
 };
 
@@ -188,6 +191,33 @@ pub async fn run_init_task(init_args: &InitArgs, base_path: &Path) -> Result<()>
     write_embedded_dir(&TEMPLATE_DIR, project_path).await?;
 
     info!("\nSuccessfully created: {}", project_name);
+
+    Ok(())
+}
+
+pub async fn run_scraping_task(projects_dir: &Path) -> Result<()> {
+    let st_index = Select::with_theme(&ColorfulTheme::default())
+        .items(ScrapingTarget::VARIANTS)
+        .default(0)
+        .with_prompt("Select a novel to scrape:")
+        .interact_opt()?;
+
+    if let Some(st_index) = st_index {
+        let st = ScrapingTarget::VARIANTS[st_index];
+
+        let project = select_project(&projects_dir).await?;
+        let save_dir = projects_dir.join(project).join("raws");
+
+        match st {
+            ScrapingTarget::TalentInDemonicSect => {
+                let scraper = scraper2322424255::Scraper::new(st).await?;
+
+                scraper.scrape(save_dir).await?;
+            }
+        }
+    } else {
+        return Err(anyhow!("No scraping target selected. Exiting."));
+    }
 
     Ok(())
 }
