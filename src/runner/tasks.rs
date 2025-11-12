@@ -157,10 +157,10 @@ pub async fn run_replace_task(replace_args: &ReplaceArgs, project_path: &Path) -
 
     let separator = "=".repeat(50);
 
-    info!("\n{}", separator);
-    info!("\nTotal {} files updated.", total_files_updated);
+    println!("\n\n{}", separator);
+    info!("Total {} files updated.", total_files_updated);
     info!("Total {} replacements made.", total_replacements);
-    info!("{}", separator);
+    println!("{}", separator);
 
     Ok(())
 }

@@ -8,7 +8,7 @@ use regex::Regex;
 use super::Chapter;
 
 static RE_SPLITTER: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?m)^第").unwrap());
-static RE_PARSER: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?s)^.+章([^\n\r]*)(.*)").unwrap());
+static RE_PARSER: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?s)^.+?章([^\n\r]*)(.*)").unwrap());
 
 pub fn process_chapters<'a>(cr_ch_text: &'a str, last_chapter_number: usize) -> Vec<Chapter> {
     let chunks: Vec<_> = RE_SPLITTER.split(cr_ch_text.trim()).skip(1).collect();
