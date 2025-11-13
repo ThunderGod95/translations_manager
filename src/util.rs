@@ -1,15 +1,12 @@
 use std::{
     ffi::{OsStr, OsString},
-    path::{Path, PathBuf},
+    path::PathBuf,
 };
 
 use anyhow::Result;
 use directories::ProjectDirs;
-use log::{error, info, warn};
-use tokio::{
-    fs::{File, create_dir_all},
-    process::Command,
-};
+use log::warn;
+use tokio::{fs::create_dir_all, process::Command};
 
 use crate::config::{PROJECT_PATH_QUALIFIERS, get_config};
 
@@ -59,30 +56,9 @@ pub fn normalize_path(path: impl AsRef<str>) -> String {
     path.as_ref().replace("\\", "/")
 }
 
-pub async fn create_and_open_files(paths: &[impl AsRef<Path>]) {
-    let mut paths_to_open: Vec<&Path> = Vec::with_capacity(paths.len());
-
-    for path_ref in paths {
-        let path = path_ref.as_ref();
-
-        match File::create(path).await {
-            Ok(_) => {
-                paths_to_open.push(path);
-            }
-            Err(e) => {
-                error!("Failed to create/overwrite file {}: {}", path.display(), e);
-            }
-        }
-    }
-
-    if !paths_to_open.is_empty() {
-        open_in_vs_code(&paths_to_open).await;
-    }
-}
-
 pub async fn open_in_vs_code(file_paths: &[impl AsRef<OsStr>]) {
     if file_paths.is_empty() {
-        error!("No file paths provided to open in VS Code.");
+        eprintln!("No file paths provided to open in VS Code.");
         return;
     }
 
@@ -103,10 +79,7 @@ pub async fn open_in_vs_code(file_paths: &[impl AsRef<OsStr>]) {
 
     cmd.args(&paths_owned);
 
-    info!(
-        "✅ Opening {} file/folder(s) in VS Code...",
-        paths_owned.len(),
-    );
+    println!("Opening {} file/folder(s) in VS Code...", paths_owned.len(),);
 
     match cmd.output().await {
         Ok(output) => {
@@ -118,12 +91,12 @@ pub async fn open_in_vs_code(file_paths: &[impl AsRef<OsStr>]) {
 
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 if !stderr.trim().is_empty() {
-                    error!("VS Code stderr:\n{}", stderr.trim());
+                    eprintln!("VS Code stderr:\n{}", stderr.trim());
                 }
 
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 if !stdout.trim().is_empty() {
-                    warn!("VS Code stdout:\n{}", stdout.trim());
+                    eprintln!("VS Code stdout:\n{}", stdout.trim());
                 }
             }
         }
@@ -172,7 +145,7 @@ pub async fn prompt_for_rerun() -> bool {
         Ok(Ok(console::Key::Enter)) => false,
         Ok(_) => true,
         Err(e) => {
-            error!("Failed to read key: {}", e);
+            eprintln!("Failed to read key: {}", e);
             false
         }
     }

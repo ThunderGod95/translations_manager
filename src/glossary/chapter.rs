@@ -1,7 +1,7 @@
 use std::{fs::read_dir, path::Path};
 
 use anyhow::Result;
-use log::{info, warn};
+use log::warn;
 use once_cell::sync::Lazy;
 use regex::Regex;
 
@@ -18,7 +18,7 @@ pub fn process_chapters<'a>(cr_ch_text: &'a str, last_chapter_number: usize) -> 
         return vec![];
     }
 
-    info!("Found {} potential chapter(s).", chunks.len());
+    println!("Found {} potential chapter(s).", chunks.len());
 
     let mut expected_number = last_chapter_number + 1;
     let mut processed_chapters: Vec<Chapter> = Vec::with_capacity(chunks.len());
@@ -31,8 +31,6 @@ pub fn process_chapters<'a>(cr_ch_text: &'a str, last_chapter_number: usize) -> 
 
         let title_text = cap.get(1).map_or("", |m| m.as_str().trim());
         let original_content = cap.get(2).map_or("", |m| m.as_str());
-
-        info!("Processing Chapter {}: {}", expected_number, title_text);
 
         let expected_title = format!("第{}章 {}", expected_number, title_text)
             .trim_end()

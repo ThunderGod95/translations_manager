@@ -22,7 +22,6 @@ pub mod init;
 pub mod projects;
 pub mod replace;
 pub mod runner;
-pub mod scraper;
 pub mod util;
 
 async fn run_app(cli: Cli) -> Result<()> {
@@ -88,9 +87,6 @@ async fn handle_task(
         Command::Init(args) => {
             return run_init_task(&args, base_path.as_ref()).await;
         }
-        Command::Scrape => {
-            return run_scraping_task(&base_path.as_ref()).await;
-        }
         _ => {}
     }
 
@@ -113,8 +109,7 @@ async fn handle_task(
         Command::Open(args) => {
             run_open_task(&args, &project_path).await;
         }
-        Command::Next => run_next_task(&project_path).await?,
-        Command::Internal | Command::Init(_) | Command::Scrape => {
+        Command::Internal | Command::Init(_) => {
             unreachable!("Pathless commands should have been handled by the guard match")
         }
     }

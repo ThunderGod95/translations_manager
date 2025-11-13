@@ -1,62 +1,61 @@
 use std::collections::HashSet;
 
 use aho_corasick::AhoCorasick;
+use bk_tree::{BKTree, metrics::Levenshtein};
 use jieba_rs::Jieba;
 use once_cell::sync::Lazy;
 use rayon::prelude::*;
 use regex::Regex;
-use strsim::normalized_levenshtein;
 use unicode_normalization::UnicodeNormalization;
 
 /// This regex matches any character that is NOT a Han character,
 /// punctuation, or a number. This includes all whitespace.
 static RE_PREPROCESS: Lazy<Regex> = Lazy::new(|| Regex::new(r"[^\p{Han}\p{P}\p{N}]").unwrap());
 
-pub fn preprocess_chinese_text(text: &str) -> String {
+pub fn preprocess_chinese_text<'a>(text: &str) -> String {
     let normalized = text.nfkc().collect::<String>();
-    RE_PREPROCESS.replace_all(&normalized, "").into_owned()
+    RE_PREPROCESS.replace_all(&normalized, "").to_string()
 }
 
-pub fn calculate_similarity(s1: &str, s2: &str) -> i32 {
-    (normalized_levenshtein(s1, s2) * 100.0) as i32
-}
-
-pub fn aho_corasick_find_all(
+pub fn aho_corasick_find_all<'a>(
     ac: &AhoCorasick,
-    valid_clean_terms: &Vec<String>,
-    clean_text: &str,
-) -> HashSet<String> {
+    terms: &'a Vec<String>,
+    text: &str,
+) -> HashSet<&'a str> {
     let mut found_clean_terms = HashSet::new();
 
-    for mat in ac.find_iter(clean_text) {
+    for mat in ac.find_iter(text) {
         let pattern_id = mat.pattern().as_usize();
-        let clean_term = valid_clean_terms[pattern_id].clone();
+        let clean_term = terms[pattern_id].as_str();
         found_clean_terms.insert(clean_term);
     }
+
     found_clean_terms
 }
 
-pub fn chinese_fuzzy_search(
+pub fn chinese_fuzzy_search<'a>(
     jieba: &Jieba,
-    terms: &[String],
-    text: &str,
-    threshold: Option<i32>,
-) -> HashSet<String> {
-    let threshold = threshold.unwrap_or(85);
-    let text_words: HashSet<&str> = jieba.cut(text, true).iter().copied().collect();
+    terms: &'a [&'a str],
+    text: &'a str,
+    threshold: Option<u32>,
+) -> HashSet<&'a str> {
+    let threshold = threshold.unwrap_or(1);
+    let text_words: Vec<_> = jieba.cut(text, true).into_par_iter().collect();
 
-    terms
+    if text_words.is_empty() {
+        return HashSet::new();
+    }
+
+    let mut bk_tree = BKTree::new(Levenshtein);
+    bk_tree.extend(terms);
+
+    text_words
         .par_iter()
-        .filter_map(|clean_term| {
-            let is_match = text_words
-                .iter()
-                .any(|&word| calculate_similarity(clean_term, word) >= threshold);
-
-            if is_match {
-                Some(clean_term.clone())
-            } else {
-                None
-            }
+        .flat_map(|word| {
+            bk_tree
+                .find(word, threshold)
+                .map(|(_dist, term)| **term)
+                .collect::<Vec<_>>()
         })
         .collect()
 }

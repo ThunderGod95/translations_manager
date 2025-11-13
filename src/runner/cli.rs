@@ -76,12 +76,6 @@ and available in the system's PATH."
     )]
     Internal,
 
-    #[command(
-        name = "next",
-        long_about = "Copied a specified number of raw chapters files to cr_ch.txt if `raws` is present and then runs `glossary` command."
-    )]
-    Next,
-
     /// 📖 Open project files or chapters in VS Code
     #[command(
         name = "open",
@@ -97,16 +91,6 @@ the entire project root directory in Visual Studio Code."
 with new text within a specified range of translated chapter files."
     )]
     Replace(ReplaceArgs),
-
-    /// 🌐 Scrape all chapters from a pre-defined target
-    #[command(
-        name = "scrape",
-        long_about = "Scrapes all chapters from an available, pre-defined target source.
-This is a standalone utility that operates independently and does 
-not work within an existing translation project. It is used to 
-gather the raw source material."
-    )]
-    Scrape,
 }
 
 impl Command {
@@ -119,8 +103,6 @@ impl Command {
             Task::Open => Command::Open(OpenArgs::default()),
             Task::Init => Command::Init(InitArgs::default()),
             Task::Internal => Command::Internal,
-            Task::Scrape => Command::Scrape,
-            Task::Next => Command::Next,
         }
     }
 }
@@ -192,10 +174,7 @@ pub enum Task {
     Distribute,
     /// The chapter opening task
     Open,
-    Next,
     Init,
     /// Editing the config task
     Internal,
-    /// Scraping task.
-    Scrape,
 }

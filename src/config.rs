@@ -28,7 +28,7 @@ pub struct AppConfig {
     pub sep_info_file: String,
     pub cache_file: String,
     pub find_history_config_file: String,
-    pub fuzzy_search_threshold: i32,
+    pub fuzzy_search_threshold: u32,
 }
 
 impl Default for AppConfig {
@@ -40,7 +40,7 @@ impl Default for AppConfig {
             sep_info_file: "sep.json".to_string(),
             cache_file: ".runner-cache.json".to_string(),
             find_history_config_file: ".find_history.txt".to_string(),
-            fuzzy_search_threshold: 65,
+            fuzzy_search_threshold: 2,
             translations_folder: "translations".to_string(),
             assets_folder: "assets".to_string(),
             dist_folder: "dist".to_string(),

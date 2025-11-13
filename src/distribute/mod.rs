@@ -3,7 +3,7 @@ mod pandoc;
 
 use anyhow::{Context, Result};
 use futures::future::join_all;
-use log::{error, info};
+use log::info;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use strum::{Display, VariantArray};
@@ -162,7 +162,7 @@ fn log_errors(dist_format: DistributionFormat, results: Vec<Result<()>>) -> Resu
     if errors.is_empty() {
         Ok(())
     } else {
-        error!(
+        eprintln!(
             "Failed to process {}/{} {}:",
             errors.len(),
             total,
@@ -170,7 +170,7 @@ fn log_errors(dist_format: DistributionFormat, results: Vec<Result<()>>) -> Resu
         );
 
         for (i, e) in errors.iter().enumerate() {
-            error!("  Failure {}: {}", i + 1, e);
+            eprintln!("  Failure {}: {}", i + 1, e);
         }
 
         Err(errors.remove(0))
