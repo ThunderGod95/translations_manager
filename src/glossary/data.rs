@@ -1,16 +1,18 @@
-use std::{collections::HashMap, fs::File, io::BufReader, path::Path};
+use std::{collections::HashMap, path::Path};
 
 use anyhow::{Context, Result};
 use itertools::Itertools;
+use std::fs;
 
 use super::{GlossaryEntry, text::preprocess_chinese_text};
 
 /// Reads and parses the JSON glossary file.
 pub fn read_glossary(glossary_path: impl AsRef<Path>) -> Result<Vec<GlossaryEntry>> {
-    let file = File::open(glossary_path).context("Failed to open glossary file")?;
-    let reader = BufReader::new(file);
+    let mut file_content = fs::read(glossary_path).context("Failed to read glossary file")?;
+
     let glossary_data: Vec<GlossaryEntry> =
-        serde_json::from_reader(reader).context("Failed to parse glossary JSON")?;
+        simd_json::from_slice(&mut file_content).context("Failed to parse glossary JSON")?;
+
     Ok(glossary_data)
 }
 

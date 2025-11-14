@@ -1,16 +1,19 @@
 use std::{
     ffi::{OsStr, OsString},
-    path::PathBuf,
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
 };
 
-use anyhow::Result;
+use anyhow::{Context, Result, anyhow, bail};
+use console::style;
 use directories::ProjectDirs;
-use log::warn;
-use tokio::{fs::create_dir_all, process::Command};
+use jwalk::WalkDir;
+use time::{OffsetDateTime, macros::format_description};
 
-use crate::config::{PROJECT_PATH_QUALIFIERS, get_config};
+use crate::config::{CONFIG, PROJECT_PATH_QUALIFIERS};
 
-pub async fn get_config_file_path() -> Result<PathBuf> {
+pub fn get_config_file_path() -> Result<PathBuf> {
     let project_dirs = ProjectDirs::from(
         PROJECT_PATH_QUALIFIERS[0],
         PROJECT_PATH_QUALIFIERS[1],
@@ -19,11 +22,13 @@ pub async fn get_config_file_path() -> Result<PathBuf> {
     .ok_or_else(|| anyhow::anyhow!("Could not determine project directories"))?;
 
     let config_dir = project_dirs.config_dir();
-    create_dir_all(config_dir).await?;
+
+    fs::create_dir_all(config_dir)?;
+
     Ok(config_dir.join("config.toml"))
 }
 
-pub async fn get_cache_path() -> Result<PathBuf> {
+pub fn get_cache_path() -> Result<PathBuf> {
     let project_dirs = ProjectDirs::from(
         PROJECT_PATH_QUALIFIERS[0],
         PROJECT_PATH_QUALIFIERS[1],
@@ -32,13 +37,14 @@ pub async fn get_cache_path() -> Result<PathBuf> {
     .ok_or_else(|| anyhow::anyhow!("Could not determine project directories"))?;
 
     let path = project_dirs.cache_dir();
-    create_dir_all(path).await?;
+
+    fs::create_dir_all(path)?;
 
     // Use the filename from the loaded config
-    Ok(path.join(&get_config().await.cache_file))
+    Ok(path.join(&CONFIG.cache_file))
 }
 
-pub async fn get_find_history_config_path() -> Result<PathBuf> {
+pub fn get_find_history_config_path() -> Result<PathBuf> {
     let project_dirs = ProjectDirs::from(
         PROJECT_PATH_QUALIFIERS[0],
         PROJECT_PATH_QUALIFIERS[1],
@@ -47,22 +53,25 @@ pub async fn get_find_history_config_path() -> Result<PathBuf> {
     .ok_or_else(|| anyhow::anyhow!("Could not determine project directories"))?;
 
     let path = project_dirs.cache_dir();
-    create_dir_all(path).await?;
 
-    Ok(path.join(&get_config().await.find_history_config_file))
+    fs::create_dir_all(path)?;
+
+    Ok(path.join(&CONFIG.find_history_config_file))
 }
 
 pub fn normalize_path(path: impl AsRef<str>) -> String {
     path.as_ref().replace("\\", "/")
 }
 
-pub async fn open_in_vs_code(file_paths: &[impl AsRef<OsStr>]) {
+pub fn open_in_vs_code(file_paths: &[impl AsRef<OsStr>]) {
     if file_paths.is_empty() {
         eprintln!("No file paths provided to open in VS Code.");
         return;
     }
 
     let paths_owned: Vec<OsString> = file_paths.iter().map(|p| p.as_ref().to_owned()).collect();
+
+    println!("Opening {} file/folder(s) in VS Code...", paths_owned.len());
 
     let mut cmd;
 
@@ -79,14 +88,18 @@ pub async fn open_in_vs_code(file_paths: &[impl AsRef<OsStr>]) {
 
     cmd.args(&paths_owned);
 
-    println!("Opening {} file/folder(s) in VS Code...", paths_owned.len(),);
+    let cmd_result = cmd.output();
 
-    match cmd.output().await {
+    match cmd_result {
         Ok(output) => {
             if !output.status.success() {
-                warn!(
-                    "⚠️ VS Code task finished with a non-success status: {}",
-                    output.status
+                println!(
+                    "{}",
+                    style(format!(
+                        "[WARN] VS Code task finished with a non-success status: {}",
+                        output.status
+                    ))
+                    .yellow()
                 );
 
                 let stderr = String::from_utf8_lossy(&output.stderr);
@@ -101,9 +114,12 @@ pub async fn open_in_vs_code(file_paths: &[impl AsRef<OsStr>]) {
             }
         }
         Err(e) => {
-            warn!(
-                "⚠️ Could not execute VS Code task. Is 'code' in your system's PATH? Error: {}",
-                e
+            println!(
+                "{}",
+                style(format!("[WARN] Could not execute VS Code task. Is 'code' in your system's PATH? Error: {}",
+                    e
+                ))
+                .yellow()
             );
         }
     }
@@ -132,21 +148,135 @@ pub fn is_standalone() -> bool {
 
 /// Waits for user input to either re-run or quit.
 /// Returns `true` to re-run, `false` to quit.
-pub async fn prompt_for_rerun() -> bool {
+pub fn prompt_for_rerun() -> bool {
     eprintln!("\nPress 'Enter' to quit, or any other key to run again...");
 
-    let key_result = tokio::task::spawn_blocking(|| {
-        let term = console::Term::stdout();
-        term.read_key()
-    })
-    .await;
+    let term = console::Term::stdout();
+    let key_result = term.read_key();
 
     match key_result {
-        Ok(Ok(console::Key::Enter)) => false,
+        Ok(console::Key::Enter) => false,
         Ok(_) => true,
         Err(e) => {
             eprintln!("Failed to read key: {}", e);
             false
         }
     }
+}
+
+/// Checks if a file at the given path is "empty".
+///
+/// An "empty" file is one that either:
+/// 1. Has a size of 0 bytes.
+/// 2. Contains *only* characters that are NOT alphanumeric or ASCII punctuation/symbols.
+///    (e.g., it contains only whitespace, control, or format characters).
+/// 3. Does not exist or we do not have permission reading.
+pub fn is_file_empty(path: impl AsRef<Path>) -> bool {
+    let path = path.as_ref();
+
+    match fs::metadata(path) {
+        Ok(metadata) => {
+            if metadata.len() == 0 {
+                true
+            } else {
+                let content = match fs::read_to_string(path) {
+                    Ok(c) => c,
+                    Err(_) => return true,
+                };
+
+                let has_visible_content = content
+                    .chars()
+                    .any(|c| c.is_alphanumeric() || c.is_ascii_punctuation());
+
+                !has_visible_content
+            }
+        }
+        Err(_) => true,
+    }
+}
+
+pub fn get_current_date() -> Result<String> {
+    let format = format_description!("[year]-[month]-[day]");
+    let now_utc = OffsetDateTime::now_utc();
+    now_utc
+        .date()
+        .format(&format)
+        .context("Failed to get current date.")
+}
+
+pub fn collect_numbered_file_paths(
+    input_dir: &Path,
+    format: Option<&str>,
+    start: Option<usize>,
+    end: Option<usize>,
+) -> Result<(Vec<PathBuf>, u64)> {
+    let check_format = format.is_some();
+    let format = format.unwrap_or("");
+
+    let mut entries: Vec<(usize, PathBuf, u64)> = WalkDir::new(input_dir)
+        .max_depth(1)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            if !entry.file_type().is_file() {
+                return None;
+            }
+
+            let path = entry.path();
+
+            if check_format {
+                if path.extension() != Some(OsStr::new(format)) {
+                    return None;
+                }
+            }
+
+            let file_num = path
+                .file_stem()
+                .and_then(OsStr::to_str)
+                .and_then(|s| s.parse::<usize>().ok())?;
+
+            if start.map_or(false, |s| file_num < s) || end.map_or(false, |e| file_num > e) {
+                return None;
+            }
+
+            match entry.metadata() {
+                Ok(md) => Some(Ok((file_num, path.to_path_buf(), md.len()))), // .to_path_buf() to own path
+                Err(e) => Some(Err(anyhow!(
+                    "Failed to get metadata for {}: {}",
+                    path.display(),
+                    e
+                ))),
+            }
+        })
+        .collect::<Result<Vec<_>>>()
+        .context("Failed while scanning directory for files")?;
+
+    entries.sort_by_key(|(file_num, _, _)| *file_num);
+
+    if let (Some(s), Some(e)) = (start, end) {
+        if s > e {
+            bail!("Validation failed: Start value ({s}) cannot be greater than end value ({e}).");
+        }
+
+        let expected_count = e.saturating_sub(s).saturating_add(1);
+
+        if entries.len() != expected_count {
+            bail!(
+                "Validation failed: Expected {expected_count} files in range {s}-{e}, but only found {}. Check for missing files.",
+                entries.len()
+            );
+        }
+    }
+
+    let mut file_paths = Vec::with_capacity(entries.len());
+    let mut total_size = 0u64;
+
+    for (_, path, size) in entries {
+        file_paths.push(path);
+        total_size = total_size
+            .checked_add(size)
+            .ok_or_else(|| anyhow!("Total size overflow while summing file sizes"))?;
+    }
+
+    Ok((file_paths, total_size))
 }

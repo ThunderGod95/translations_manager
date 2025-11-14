@@ -1,9 +1,9 @@
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
+use console::style;
 use dialoguer::Select;
 use dialoguer::theme::ColorfulTheme;
 use directories::BaseDirs;
-use log::{error, info};
 use std::path::Path;
 use std::process;
 use strum::VariantArray;
@@ -24,7 +24,7 @@ pub mod replace;
 pub mod runner;
 pub mod util;
 
-async fn run_app(cli: Cli) -> Result<()> {
+fn run_app(cli: Cli) -> Result<()> {
     let base_path = if let Some(path) = cli.path {
         path.canonicalize()
             .with_context(|| format!("Failed to find projects directory at: {}", path.display()))?
@@ -35,7 +35,7 @@ async fn run_app(cli: Cli) -> Result<()> {
     };
 
     let project = if let Some(project_name) = cli.project {
-        let projects = get_projects(&base_path).await?;
+        let projects = get_projects(&base_path)?;
         if !projects.contains(&project_name) {
             bail!(
                 "Project '{}' not found in {}",
@@ -43,13 +43,13 @@ async fn run_app(cli: Cli) -> Result<()> {
                 base_path.display()
             );
         }
-        info!("✅ Using project from argument: {}", project_name);
+        println!("Using project from argument: {}", project_name);
         Some(project_name)
     } else {
         None
     };
 
-    let selected_task: Command = if let Some(command) = cli.command {
+    let mut selected_task: Command = if let Some(command) = cli.command {
         command
     } else {
         let task_index = Select::with_theme(&ColorfulTheme::default())
@@ -67,25 +67,25 @@ async fn run_app(cli: Cli) -> Result<()> {
         }
     };
 
-    handle_task(selected_task, base_path, project).await?;
+    handle_task(&mut selected_task, base_path, project)?;
 
     Ok(())
 }
 
-async fn handle_task(
-    task: Command,
+fn handle_task(
+    task: &mut Command,
     base_path: impl AsRef<Path>,
     project: Option<impl AsRef<Path>>,
 ) -> Result<()> {
-    let task = populate_arguments(task).await?;
+    populate_arguments(task)?;
 
     // First run tasks that don't need project path.
     match task {
         Command::Internal => {
-            return run_internal_task().await;
+            return run_internal_task();
         }
         Command::Init(args) => {
-            return run_init_task(&args, base_path.as_ref()).await;
+            return run_init_task(&args, base_path.as_ref());
         }
         _ => {}
     }
@@ -93,21 +93,21 @@ async fn handle_task(
     let project_path = if let Some(project) = project {
         base_path.as_ref().join(project)
     } else {
-        let project = select_project(&base_path).await?;
+        let project = select_project(&base_path)?;
         base_path.as_ref().join(project)
     };
 
     match task {
-        Command::Glossary => run_glossary_task(&project_path).await?,
+        Command::Glossary => run_glossary_task(&project_path)?,
         Command::Find(args) => {
-            run_find_task(&args, &project_path).await?;
+            run_find_task(&args, &project_path)?;
         }
         Command::Replace(args) => {
-            run_replace_task(&args, &project_path).await?;
+            run_replace_task(&args, &project_path)?;
         }
-        Command::Distribute(args) => run_dist_task(&args, &project_path).await?,
+        Command::Distribute(args) => run_dist_task(&args, &project_path)?,
         Command::Open(args) => {
-            run_open_task(&args, &project_path).await;
+            run_open_task(&args, &project_path);
         }
         Command::Internal | Command::Init(_) => {
             unreachable!("Pathless commands should have been handled by the guard match")
@@ -117,36 +117,28 @@ async fn handle_task(
     Ok(())
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
     let cli = Cli::parse();
-
-    env_logger::Builder::new()
-        .filter_level(cli.verbose.log_level_filter())
-        .format_timestamp(None)
-        .format_file(false)
-        .format_module_path(false)
-        .init();
 
     let standalone = is_standalone();
 
-    let mut run_result = run_app(cli.clone()).await;
+    let mut run_result = run_app(cli.clone());
 
     if standalone {
         loop {
             if let Err(e) = run_result {
-                error!("{}", e);
+                eprintln!("{}", style(format!("[ERROR] {}", e)).red());
             }
 
-            if !prompt_for_rerun().await {
+            if !prompt_for_rerun() {
                 break;
             }
 
-            run_result = run_app(cli.clone()).await;
+            run_result = run_app(cli.clone());
         }
     } else {
         if let Err(e) = run_result {
-            error!("{}", e);
+            eprintln!("{}", style(format!("[ERROR] {}", e)).red());
             process::exit(1);
         }
     }

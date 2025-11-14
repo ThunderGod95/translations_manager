@@ -1,16 +1,15 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, sync::LazyLock};
 
 use aho_corasick::AhoCorasick;
 use bk_tree::{BKTree, metrics::Levenshtein};
 use jieba_rs::Jieba;
-use once_cell::sync::Lazy;
 use rayon::prelude::*;
 use regex::Regex;
 use unicode_normalization::UnicodeNormalization;
 
 /// This regex matches any character that is NOT a Han character,
 /// punctuation, or a number. This includes all whitespace.
-static RE_PREPROCESS: Lazy<Regex> = Lazy::new(|| Regex::new(r"[^\p{Han}\p{P}\p{N}]").unwrap());
+static RE_PREPROCESS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[^\p{Han}\p{P}\p{N}]").unwrap());
 
 pub fn preprocess_chinese_text<'a>(text: &str) -> String {
     let normalized = text.nfkc().collect::<String>();

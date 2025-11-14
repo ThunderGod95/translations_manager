@@ -3,7 +3,7 @@ mod data;
 mod text;
 mod util;
 
-pub use chapter::get_last_chapter_number;
+use dialoguer::{Confirm, theme::ColorfulTheme};
 
 use std::{
     collections::{HashMap, HashSet},
@@ -12,19 +12,17 @@ use std::{
 };
 
 use aho_corasick::AhoCorasick;
-use anyhow::{Context, Result, anyhow};
-use clipboard_win::set_clipboard_string;
+use anyhow::{Context, Result, bail};
 use itertools::Itertools;
 use jieba_rs::Jieba;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use tokio::fs::read_to_string;
+use std::fs::read_to_string;
 
-use crate::config::get_config;
+use crate::{config::CONFIG, util::is_file_empty};
 use chapter::*;
 use data::*;
 use text::*;
-#[allow(unused)]
 use util::*;
 
 #[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Clone)]
@@ -45,7 +43,7 @@ pub struct Chapter {
     pub text: String,
 }
 
-pub struct GlossaryProcessor {
+struct GlossaryProcessor {
     jieba: Jieba,
     glossary_data: Vec<GlossaryEntry>,
     original_to_clean_map: HashMap<String, String>,
@@ -53,24 +51,28 @@ pub struct GlossaryProcessor {
     ac: AhoCorasick,
     assets_path: PathBuf,
     translations_path: PathBuf,
+    last_chapter_num: usize,
 }
 
 impl GlossaryProcessor {
-    pub async fn new(
+    fn new(
         assets_path: impl AsRef<Path>,
         translations_path: impl AsRef<Path>,
+        last_chapter_num: usize,
     ) -> Result<Self> {
         let assets_path = assets_path.as_ref().to_owned();
         let translations_path = translations_path.as_ref().to_owned();
 
         let jieba = Jieba::new();
 
-        let glossary_data = read_glossary(assets_path.join(&get_config().await.glossary_file))
-            .context("Failed to read glossary file. Check if it exists and you have the permission to READ.")?;
+        let glossary_path = assets_path.join(&CONFIG.glossary_file);
+        let glossary_data = read_glossary(glossary_path).context(
+            "Failed to read glossary file. Check if it exists and you have the permission to READ.",
+        )?;
 
         let (original_to_clean_map, valid_clean_terms) = preprocess_glossary(&glossary_data);
 
-        println!("Loaded {} valid glossary entries.", glossary_data.len());
+        println!("Loaded {} valid glossary entries.", glossary_data.len(),);
 
         let ac =
             AhoCorasick::new(&valid_clean_terms).context("Failed to build Aho-Corasick Engine")?;
@@ -83,36 +85,68 @@ impl GlossaryProcessor {
             ac,
             assets_path,
             translations_path,
+            last_chapter_num,
         })
     }
 
-    pub async fn process_new_chapters(&self) -> Result<()> {
-        let config = get_config().await;
+    fn process_new_chapters(&self) -> Result<()> {
+        let config = &CONFIG;
 
+        // 1. Read and process chapter text
         let chapter_file_path = self.assets_path.join(&config.chapter_file);
-        let chapter_file = read_to_string(chapter_file_path)
-            .await
-            .context("Failed to read chapter file.")?;
+        let chapter_file =
+            read_to_string(chapter_file_path).context("Failed to read chapter file.")?;
 
-        let last_chapter_number = get_last_chapter_number(&self.translations_path)
-            .context("Failed to get last chapter number")?;
-
-        let chapters = process_chapters(&chapter_file, last_chapter_number);
+        let chapters = process_chapters(&chapter_file, self.last_chapter_num);
 
         if chapters.is_empty() {
+            println!("No new chapters found.");
             return Ok(());
         }
 
         let combined_chapter_text = chapters.iter().map(|c| &c.text).join("\n\n--\n\n");
         let processed_chapter_text = preprocess_chinese_text(&combined_chapter_text);
 
+        // 2. Run searches to find all unique terms
+        let all_found_terms =
+            self.find_all_glossary_terms(&processed_chapter_text, config.fuzzy_search_threshold);
+
+        println!(
+            "Total unique glossary terms after all phases: {}.",
+            all_found_terms.len()
+        );
+
+        // 3. Build the micro-glossary
+        let (found_entries, micro_glossary_string) = self.build_micro_glossary(&all_found_terms);
+
+        println!("\n\n--- Final Micro-Glossary Terms ---\n");
+
+        for entry in &found_entries {
+            println!("* {} - {}", entry.cn, entry.en);
+        }
+
+        // 4. Build and paste the final prompt
+        let final_prompt_string =
+            self.build_final_prompt(&micro_glossary_string, &combined_chapter_text)?;
+
+        paste_glossary(final_prompt_string)?;
+
+        // 5. Create placeholder files for translation
+        create_and_open_files(&self.translations_path, &chapters)?;
+
+        Ok(())
+    }
+
+    fn find_all_glossary_terms<'a>(
+        &'a self,
+        text: &'a str,
+        fuzzy_threshold: u32,
+    ) -> HashSet<String> {
         let mut time = Instant::now();
 
-        let exact_matches =
-            aho_corasick_find_all(&self.ac, &self.valid_clean_terms, &processed_chapter_text);
+        let exact_matches = aho_corasick_find_all(&self.ac, &self.valid_clean_terms, text);
 
         println!("Terms found:");
-
         println!(
             "\tExact: {} [{}ms]",
             exact_matches.len(),
@@ -132,8 +166,8 @@ impl GlossaryProcessor {
         let fuzzy_matches = chinese_fuzzy_search(
             &self.jieba,
             &terms_for_fuzzy_match,
-            &processed_chapter_text,
-            Some(config.fuzzy_search_threshold),
+            text,
+            Some(fuzzy_threshold),
         );
 
         println!(
@@ -142,16 +176,17 @@ impl GlossaryProcessor {
             time.elapsed().as_millis(),
         );
 
-        let mut all_found_terms = HashSet::new();
+        let mut all_found_terms: HashSet<String> =
+            exact_matches.into_iter().map(String::from).collect();
+        all_found_terms.extend(fuzzy_matches.into_iter().map(String::from));
 
-        all_found_terms.extend(exact_matches);
-        all_found_terms.extend(fuzzy_matches);
+        all_found_terms
+    }
 
-        println!(
-            "Total unique glossary terms after all phases: {}.",
-            all_found_terms.len()
-        );
-
+    fn build_micro_glossary<'a>(
+        &'a self,
+        all_found_terms: &HashSet<String>,
+    ) -> (Vec<&'a GlossaryEntry>, String) {
         let found_entries: Vec<&GlossaryEntry> = self
             .glossary_data
             .par_iter()
@@ -165,29 +200,53 @@ impl GlossaryProcessor {
             })
             .collect();
 
-        println!("\n\n--- Final Micro-Glossary Terms ---\n");
-
-        for entry in &found_entries {
-            println!("* {} - {}", entry.cn, entry.en);
-        }
-
         let micro_glossary_string = create_micro_glossary(&found_entries);
 
+        (found_entries, micro_glossary_string)
+    }
+
+    /// Reads the prompt template and combines it with the glossary and chapter text.
+    fn build_final_prompt(
+        &self,
+        micro_glossary_string: &str,
+        combined_chapter_text: &str,
+    ) -> Result<String> {
+        let config = &CONFIG;
         let prompt_template =
             read_to_string(self.assets_path.join(&config.translation_prompt_file))
-                .await
                 .context("Failed to read translation prompt file")?;
 
-        let final_prompt_string = format!(
+        Ok(format!(
             "{}\n\n**Glossary**\n\n{}\n\n---\n\n**Chinese Chapter(s) to Translate:**\n{}",
             prompt_template, micro_glossary_string, combined_chapter_text
-        );
-
-        set_clipboard_string(&final_prompt_string)
-            .map_err(|e| anyhow!("Failed to set clipboard: {}", e))?;
-
-        create_and_open_files(&self.translations_path, &chapters).await?;
-
-        Ok(())
+        ))
     }
+}
+
+pub fn glossary_processor(
+    assets_path: impl AsRef<Path>,
+    translations_path: impl AsRef<Path>,
+) -> Result<()> {
+    let last_chapter = find_last_chapter(&translations_path)?;
+    let last_chapter_path = translations_path
+        .as_ref()
+        .join(format!("{}.md", last_chapter));
+
+    if is_file_empty(last_chapter_path) {
+        let con = Confirm::with_theme(&ColorfulTheme::default())
+            .with_prompt("Previous chapter file is empty. Do you still want to proceed?")
+            .default(false)
+            .show_default(true)
+            .interact()?;
+
+        if !con {
+            bail!("Chapter no. mismatch found. Exiting...");
+        }
+    }
+
+    let glossary_processor = GlossaryProcessor::new(assets_path, translations_path, last_chapter)?;
+
+    glossary_processor.process_new_chapters()?;
+
+    Ok(())
 }

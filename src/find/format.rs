@@ -2,7 +2,6 @@ use std::io;
 
 use anyhow::Result;
 use prettytable::{Cell, Row, Table, format};
-use terminal_size::{Width, terminal_size};
 
 use super::single::Match;
 
@@ -28,9 +27,7 @@ fn write_table<W: io::Write>(matches: &Vec<(usize, Vec<Match>)>, writer: &mut W)
         return Ok(());
     }
 
-    let terminal_width = terminal_size()
-        .map(|(Width(w), _)| w as usize)
-        .unwrap_or(80);
+    let terminal_width = console::Term::stdout().size().1 as usize;
 
     const FILE_HEADER: &str = "File";
     const LINE_HEADER: &str = "Line No.";

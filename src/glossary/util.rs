@@ -1,11 +1,12 @@
 use anyhow::{Result, bail};
+use arboard::Clipboard;
+use std::fs::File;
 use std::path::Path;
-use tokio::fs::File;
 
 use super::Chapter;
 use crate::util::open_in_vs_code;
 
-pub async fn create_and_open_files(base_path: &Path, chapters: &Vec<Chapter>) -> Result<()> {
+pub fn create_and_open_files(base_path: &Path, chapters: &Vec<Chapter>) -> Result<()> {
     let new_files: Vec<_> = chapters
         .iter()
         .map(|chapter| base_path.join(format!("{}{}", chapter.expected_number, ".md")))
@@ -14,7 +15,7 @@ pub async fn create_and_open_files(base_path: &Path, chapters: &Vec<Chapter>) ->
     let mut paths_to_open: Vec<&Path> = Vec::with_capacity(new_files.len());
 
     for path in &new_files {
-        match File::create(&path).await {
+        match File::create(&path) {
             Ok(_) => {
                 paths_to_open.push(&path);
             }
@@ -25,7 +26,7 @@ pub async fn create_and_open_files(base_path: &Path, chapters: &Vec<Chapter>) ->
     }
 
     if !paths_to_open.is_empty() {
-        open_in_vs_code(&paths_to_open).await;
+        open_in_vs_code(&paths_to_open);
     }
 
     println!("Created/Verified {} file(s)", new_files.len());
@@ -33,7 +34,19 @@ pub async fn create_and_open_files(base_path: &Path, chapters: &Vec<Chapter>) ->
     Ok(())
 }
 
-// pub async fn check_if_chapter_file_empty(translations_path: &Path, chapter: usize) {
-//     let chapter_file_name = format!("{}.md", chapter);
+pub fn paste_glossary(content: String) -> Result<()> {
+    let mut clipboard = Clipboard::new()?;
 
-// }
+    clipboard.set_text(content)?;
+
+    #[cfg(target_os = "linux")]
+    {
+        println!("Prompt copied to clipboard!");
+        println!("You can now paste the content into your target application.");
+        println!("Press Ctrl+C to exit.");
+
+        clipboard.wait()?;
+    }
+
+    Ok(())
+}

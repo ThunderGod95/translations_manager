@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
-use clap_verbosity_flag::{InfoLevel, Verbosity};
 use strum::{Display, EnumString, VariantArray};
 
 #[derive(Parser, Debug, Clone)]
@@ -12,10 +11,6 @@ use strum::{Display, EnumString, VariantArray};
                   including glossary generation and content searching."
 )]
 pub struct Cli {
-    #[clap(flatten)]
-    pub verbose: Verbosity<InfoLevel>,
-
-    /// The command to execute (e.g., 'glossary', 'find')
     #[command(subcommand)]
     pub command: Option<Command>,
 

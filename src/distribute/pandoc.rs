@@ -1,15 +1,14 @@
 use super::{DistributionFormat, VolumeInfo};
-use crate::util::normalize_path;
+use crate::util::{get_current_date, normalize_path};
 use anyhow::{Context, Result, anyhow};
-use chrono::Utc;
-use log::{info, warn};
+use console::style;
+use jwalk::WalkDir;
 use path_clean::PathClean;
 use std::fmt::Display;
+use std::fs;
+use std::io::Write;
 use std::path::Path;
-use std::process::Stdio;
-use tokio::fs;
-use tokio::io::AsyncWriteExt;
-use tokio::process::Command;
+use std::process::{Command, Stdio};
 
 #[derive(Debug, Clone, Default)]
 pub struct PandocArgs(Vec<String>);
@@ -85,7 +84,7 @@ impl PandocMetadata {
     }
 }
 
-pub(super) async fn run(pandoc_args: PandocArgs, input: String) -> Result<()> {
+pub(super) fn run(pandoc_args: PandocArgs, input: String) -> Result<()> {
     let mut cmd = Command::new("pandoc");
     cmd.args(pandoc_args.get())
         .stdin(Stdio::piped())
@@ -103,15 +102,12 @@ pub(super) async fn run(pandoc_args: PandocArgs, input: String) -> Result<()> {
 
     stdin
         .write_all(input.as_bytes())
-        .await
         .context("Failed to pass chapters' content to pandoc.")?;
 
+    // Close stdin to signal EOF to pandoc
     drop(stdin);
 
-    let status = child
-        .wait()
-        .await
-        .context("Failed to wait on pandoc process")?;
+    let status = child.wait().context("Failed to wait on pandoc process")?;
 
     if status.success() {
         Ok(())
@@ -125,7 +121,7 @@ pub(super) fn build_metadata(
     assets_dir: impl AsRef<Path>,
 ) -> Result<PandocMetadata> {
     let cover_image_path = assets_dir.as_ref().join(&vol_info.image).clean();
-    let current_date = Utc::now().format("%Y-%m-%d").to_string();
+    let current_date = get_current_date()?;
     let mut pandoc_metadata = PandocMetadata::default();
 
     if cover_image_path.exists() {
@@ -148,7 +144,7 @@ pub(super) fn build_metadata(
     Ok(pandoc_metadata)
 }
 
-pub(super) async fn build_args(
+pub(super) fn build_args(
     dist_format: DistributionFormat,
     metadata: &PandocMetadata,
     translations_dir: impl AsRef<Path>,
@@ -177,10 +173,10 @@ pub(super) async fn build_args(
 
     match dist_format {
         DistributionFormat::PDF => {
-            apply_pdf_args(&mut pandoc_args, assets_dir).await?;
+            apply_pdf_args(&mut pandoc_args, assets_dir)?;
         }
         DistributionFormat::EPUB => {
-            apply_epub_args(&mut pandoc_args, metadata, assets_dir).await?;
+            apply_epub_args(&mut pandoc_args, metadata, assets_dir)?;
         }
         _ => {}
     }
@@ -192,17 +188,23 @@ pub(super) async fn build_args(
     Ok(pandoc_args)
 }
 
-async fn apply_pdf_args(pandoc_args: &mut PandocArgs, assets_dir: &Path) -> Result<()> {
+fn apply_pdf_args(pandoc_args: &mut PandocArgs, assets_dir: &Path) -> Result<()> {
     pandoc_args.set_pdf_engine("xelatex");
 
     let pdf_style_path = assets_dir.join("dist").join("style.tex");
 
-    if fs::metadata(&pdf_style_path).await.is_ok() {
-        info!("Found PDF styles. Applying them...");
+    if fs::metadata(&pdf_style_path).is_ok() {
+        println!("Found PDF styles. Applying them...");
 
         pandoc_args.include_in_header(pdf_style_path);
     } else {
-        warn!("PDF styles not found. Applying default styles...");
+        println!(
+            "{}",
+            style(format!(
+                "[WARN] PDF styles not found. Applying default styles..."
+            ))
+            .yellow()
+        );
 
         pandoc_args
             .set_variable("linestretch", "1.25")
@@ -217,18 +219,23 @@ async fn apply_pdf_args(pandoc_args: &mut PandocArgs, assets_dir: &Path) -> Resu
     Ok(())
 }
 
-async fn apply_epub_args(
+fn apply_epub_args(
     pandoc_args: &mut PandocArgs,
     metadata: &PandocMetadata,
     assets_dir: &Path,
 ) -> Result<()> {
     let epub_dist_info = assets_dir.join("dist");
 
-    if fs::metadata(&epub_dist_info).await.is_ok() {
-        let mut entries = fs::read_dir(epub_dist_info).await?;
-
-        while let Some(entry) = entries.next_entry().await? {
+    if fs::metadata(&epub_dist_info).is_ok() {
+        for entry in WalkDir::new(&epub_dist_info)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
             let entry_path = entry.path();
+
+            if entry.file_type().is_dir() {
+                continue;
+            }
 
             if let Some(ex_str) = entry_path.extension().and_then(|s| s.to_str()) {
                 match ex_str {

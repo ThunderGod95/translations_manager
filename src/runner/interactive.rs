@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::Result;
 use dialoguer::{Confirm, History, Input, theme::ColorfulTheme};
@@ -6,31 +6,20 @@ use dialoguer::{Confirm, History, Input, theme::ColorfulTheme};
 use super::cli::{Command, FindArgs, InitArgs, ReplaceArgs};
 use crate::{runner::interactive::histories::FindHistory, util::get_find_history_config_path};
 
-pub async fn populate_arguments(mut command: Command) -> Result<Command> {
-    let history_path = get_find_history_config_path().await?;
-
-    command = tokio::task::spawn_blocking(move || {
-        match &mut command {
-            Command::Glossary => Ok(()),
-            Command::Internal => Ok(()),
-            Command::Distribute(_) => Ok(()),
-            Command::Open(_) => Ok(()),
-            Command::Find(find_args) => populate_find_arguments(find_args, &history_path),
-            Command::Replace(replace_args) => populate_replace_arguments(replace_args),
-            Command::Init(init_args) => populate_init_arguments(init_args),
-        }?;
-
-        Ok::<_, anyhow::Error>(command)
-    })
-    .await??;
-
-    Ok(command)
+pub fn populate_arguments(command: &mut Command) -> Result<()> {
+    match command {
+        Command::Glossary => Ok(()),
+        Command::Internal => Ok(()),
+        Command::Distribute(_) => Ok(()),
+        Command::Open(_) => Ok(()),
+        Command::Find(find_args) => populate_find_arguments(find_args),
+        Command::Replace(replace_args) => populate_replace_arguments(replace_args),
+        Command::Init(init_args) => populate_init_arguments(init_args),
+    }
 }
 
-pub fn populate_find_arguments(
-    find_args: &mut FindArgs,
-    history_path: impl AsRef<Path>,
-) -> Result<()> {
+pub fn populate_find_arguments(find_args: &mut FindArgs) -> Result<()> {
+    let history_path = get_find_history_config_path()?;
     let mut history = FindHistory::load(history_path, 20);
 
     if let Some(pattern) = &find_args.pattern {

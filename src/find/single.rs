@@ -1,12 +1,12 @@
+use std::io::{BufRead, BufReader};
 use std::path::Path;
 
 use anyhow::Result;
 use rayon::prelude::*;
 use regex::Regex;
-use tokio::fs::read_to_string;
-use tokio::task::spawn_blocking;
+use std::fs::File;
 
-use crate::find::shared::read_files;
+use crate::util::collect_numbered_file_paths;
 
 /// Represents a single line match.
 #[derive(Debug, Clone)]
@@ -15,60 +15,63 @@ pub struct Match {
     pub line_content: String,
 }
 
-pub async fn find_matches_in_folder(
+pub fn find_matches_in_folder(
     folder_path: impl AsRef<Path>,
     search_pattern: &str,
     use_regex: bool,
     start_file: Option<usize>,
     end_file: Option<usize>,
 ) -> Result<Vec<(usize, Vec<Match>)>> {
-    let file_contents = read_files(&folder_path, start_file, end_file).await;
+    let folder_path = folder_path.as_ref();
+
+    let (files_to_read, _) =
+        collect_numbered_file_paths(&folder_path, Some("md"), start_file, end_file)?;
 
     let pattern_string = search_pattern.to_string();
 
-    let matches_result = spawn_blocking(move || {
-        let matcher = Matcher::new(&pattern_string, use_regex)?;
+    let matcher = Matcher::new(&pattern_string, use_regex)?;
 
-        let results = file_contents
-            .par_iter()
-            .map(|(index, content)| {
-                matcher.find_matches(content).map(|matches| {
-                    if matches.is_empty() {
-                        None // No matches, becomes None
-                    } else {
-                        Some((*index, matches)) // Found matches
-                    }
-                })
-            })
-            .collect::<Result<Vec<_>, _>>();
+    let results: Vec<(usize, Vec<Match>)> = files_to_read
+        .par_iter()
+        .filter_map(|path| {
+            let file_number = path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .and_then(|s| s.strip_suffix(".md"))
+                .and_then(|name| name.parse::<usize>().ok())
+                .unwrap_or(0); // We can safely unwrap because we know file_paths only contains numbered files.
 
-        match results {
-            Ok(list_with_nones) => {
-                let final_list = list_with_nones
-                    .into_iter()
-                    .filter_map(|opt| opt)
-                    .collect::<Vec<(usize, Vec<Match>)>>();
-                Ok(final_list)
+            let file = match File::open(path) {
+                Ok(f) => f,
+                Err(e) => {
+                    eprintln!("[WARN] Failed to open file {}: {}", path.display(), e);
+                    return None;
+                }
+            };
+
+            let reader = BufReader::new(file);
+
+            let matches = matcher.find_matches(reader);
+
+            if matches.is_empty() {
+                None
+            } else {
+                Some((file_number, matches))
             }
-            Err(e) => Err(e),
-        }
-    })
-    .await;
+        })
+        .collect();
 
-    match matches_result {
-        Ok(inner_result) => inner_result,
-        Err(join_error) => Err(anyhow::Error::from(join_error)),
-    }
+    Ok(results)
 }
 
-pub async fn find_matches_in_file(
+pub fn find_matches_in_file(
     file_path: impl AsRef<Path>,
     search_pattern: &str,
     use_regex: bool,
 ) -> Result<Vec<Match>> {
-    let content = read_to_string(file_path).await?;
+    let content = BufReader::new(File::open(file_path)?);
     let matcher = Matcher::new(search_pattern, use_regex)?;
-    Ok(matcher.find_matches(&content)?)
+    Ok(matcher.find_matches(content))
 }
 
 /// Internal struct to handle single-pattern matching.
@@ -89,22 +92,24 @@ impl Matcher {
         })
     }
 
-    fn find_matches(&self, haystack: &str) -> Result<Vec<Match>> {
+    fn find_matches(&self, haystack: BufReader<File>) -> Vec<Match> {
         let results = haystack
             .lines()
             .enumerate()
-            .filter_map(|(num, line)| {
-                if self.regex.is_match(line) {
-                    Some(Match {
-                        line_number: num + 1,
-                        line_content: line.to_owned(),
-                    })
-                } else {
-                    None
-                }
+            .filter_map(|(num, line_result)| {
+                line_result.ok().and_then(|line_content| {
+                    if self.regex.is_match(&line_content) {
+                        Some(Match {
+                            line_number: num + 1,
+                            line_content,
+                        })
+                    } else {
+                        None
+                    }
+                })
             })
             .collect::<Vec<Match>>();
 
-        Ok(results)
+        results
     }
 }
