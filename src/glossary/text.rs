@@ -9,18 +9,16 @@ use unicode_normalization::UnicodeNormalization;
 
 /// This regex matches any character that is NOT a Han character,
 /// punctuation, or a number. This includes all whitespace.
-static RE_PREPROCESS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[^\p{Han}\p{P}\p{N}]").unwrap());
+static RE_PREPROCESS: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[^\p{Han}\p{P}\p{N}]").unwrap());
 
 pub fn preprocess_chinese_text<'a>(text: &str) -> String {
     let normalized = text.nfkc().collect::<String>();
     RE_PREPROCESS.replace_all(&normalized, "").to_string()
 }
 
-pub fn aho_corasick_find_all<'a>(
-    ac: &AhoCorasick,
-    terms: &'a Vec<String>,
-    text: &str,
-) -> HashSet<&'a str> {
+pub fn aho_corasick_find_all<'a>(terms: &'a Vec<String>, text: &str) -> HashSet<&'a str> {
+    let ac = AhoCorasick::new(terms).unwrap();
     let mut found_clean_terms = HashSet::new();
 
     for mat in ac.find_iter(text) {
@@ -33,12 +31,12 @@ pub fn aho_corasick_find_all<'a>(
 }
 
 pub fn chinese_fuzzy_search<'a>(
-    jieba: &Jieba,
     terms: &'a [&'a str],
     text: &'a str,
     threshold: Option<u32>,
 ) -> HashSet<&'a str> {
     let threshold = threshold.unwrap_or(1);
+    let jieba = Jieba::new();
     let text_words: Vec<_> = jieba.cut(text, true).into_par_iter().collect();
 
     if text_words.is_empty() {

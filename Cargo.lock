@@ -1654,7 +1654,7 @@ checksum = "622b09ce2fe2df4618636fb92176d205662f59803f39e70d1c333393082de96c"
 
 [[package]]
 name = "tscripts_rs"
-version = "1.2.0"
+version = "1.3.0"
 dependencies = [
  "aho-corasick",
  "anyhow",

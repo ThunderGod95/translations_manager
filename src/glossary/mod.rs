@@ -11,10 +11,8 @@ use std::{
     time::Instant,
 };
 
-use aho_corasick::AhoCorasick;
 use anyhow::{Context, Result, bail};
 use itertools::Itertools;
-use jieba_rs::Jieba;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::fs::read_to_string;
@@ -44,11 +42,9 @@ pub struct Chapter {
 }
 
 struct GlossaryProcessor {
-    jieba: Jieba,
     glossary_data: Vec<GlossaryEntry>,
     original_to_clean_map: HashMap<String, String>,
     valid_clean_terms: Vec<String>,
-    ac: AhoCorasick,
     assets_path: PathBuf,
     translations_path: PathBuf,
     last_chapter_num: usize,
@@ -63,8 +59,6 @@ impl GlossaryProcessor {
         let assets_path = assets_path.as_ref().to_owned();
         let translations_path = translations_path.as_ref().to_owned();
 
-        let jieba = Jieba::new();
-
         let glossary_path = assets_path.join(&CONFIG.glossary_file);
         let glossary_data = read_glossary(glossary_path).context(
             "Failed to read glossary file. Check if it exists and you have the permission to READ.",
@@ -72,17 +66,12 @@ impl GlossaryProcessor {
 
         let (original_to_clean_map, valid_clean_terms) = preprocess_glossary(&glossary_data);
 
-        println!("Loaded {} valid glossary entries.", glossary_data.len(),);
-
-        let ac =
-            AhoCorasick::new(&valid_clean_terms).context("Failed to build Aho-Corasick Engine")?;
+        println!("Loaded {} valid glossary entries.\n", glossary_data.len(),);
 
         Ok(Self {
-            jieba,
             glossary_data,
             original_to_clean_map,
             valid_clean_terms,
-            ac,
             assets_path,
             translations_path,
             last_chapter_num,
@@ -97,10 +86,9 @@ impl GlossaryProcessor {
         let chapter_file =
             read_to_string(chapter_file_path).context("Failed to read chapter file.")?;
 
-        let chapters = process_chapters(&chapter_file, self.last_chapter_num);
+        let chapters = process_chapters(&chapter_file, self.last_chapter_num)?;
 
         if chapters.is_empty() {
-            println!("No new chapters found.");
             return Ok(());
         }
 
@@ -144,7 +132,7 @@ impl GlossaryProcessor {
     ) -> HashSet<String> {
         let mut time = Instant::now();
 
-        let exact_matches = aho_corasick_find_all(&self.ac, &self.valid_clean_terms, text);
+        let exact_matches = aho_corasick_find_all(&self.valid_clean_terms, text);
 
         println!("Terms found:");
         println!(
@@ -163,12 +151,8 @@ impl GlossaryProcessor {
 
         time = Instant::now();
 
-        let fuzzy_matches = chinese_fuzzy_search(
-            &self.jieba,
-            &terms_for_fuzzy_match,
-            text,
-            Some(fuzzy_threshold),
-        );
+        let fuzzy_matches =
+            chinese_fuzzy_search(&terms_for_fuzzy_match, text, Some(fuzzy_threshold));
 
         println!(
             "\tClose: {} [{}ms]",

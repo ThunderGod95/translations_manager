@@ -11,18 +11,14 @@ static RE_SPLITTER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^第").u
 static RE_PARSER: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?s)^.+?章([^\n\r]*)(.*)").unwrap());
 
-pub fn process_chapters<'a>(cr_ch_text: &'a str, last_chapter_number: usize) -> Vec<Chapter> {
+pub fn process_chapters<'a>(
+    cr_ch_text: &'a str,
+    last_chapter_number: usize,
+) -> Result<Vec<Chapter>> {
     let chunks: Vec<_> = RE_SPLITTER.split(cr_ch_text.trim()).skip(1).collect();
 
     if chunks.is_empty() {
-        println!(
-            "{}",
-            style(format!(
-                "[WARN] No chapters found. A chapter must start with '第...章'."
-            ))
-            .yellow()
-        );
-        return vec![];
+        bail!("No chapters found. A chapter must start with '第...章'.");
     }
 
     println!("Found {} potential chapter(s).", chunks.len());
@@ -57,7 +53,7 @@ pub fn process_chapters<'a>(cr_ch_text: &'a str, last_chapter_number: usize) -> 
         expected_number += 1;
     }
 
-    processed_chapters
+    Ok(processed_chapters)
 }
 
 pub fn find_last_chapter(translations_path: impl AsRef<Path>) -> Result<usize> {
