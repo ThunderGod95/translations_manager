@@ -1,12 +1,10 @@
 use std::{
-    ffi::{OsStr, OsString},
+    ffi::OsStr,
     fs,
     path::{Path, PathBuf},
-    process::Command,
 };
 
 use anyhow::{Context, Result, anyhow, bail};
-use console::style;
 use directories::ProjectDirs;
 use jwalk::WalkDir;
 use time::{OffsetDateTime, macros::format_description};
@@ -41,7 +39,7 @@ pub fn get_cache_path() -> Result<PathBuf> {
     fs::create_dir_all(path)?;
 
     // Use the filename from the loaded config
-    Ok(path.join(&CONFIG.cache_file))
+    Ok(path.join(&CONFIG.read().unwrap().cache_file))
 }
 
 pub fn get_find_history_config_path() -> Result<PathBuf> {
@@ -56,73 +54,11 @@ pub fn get_find_history_config_path() -> Result<PathBuf> {
 
     fs::create_dir_all(path)?;
 
-    Ok(path.join(&CONFIG.find_history_config_file))
+    Ok(path.join(&CONFIG.read().unwrap().find_history_config_file))
 }
 
 pub fn normalize_path(path: impl AsRef<str>) -> String {
     path.as_ref().replace("\\", "/")
-}
-
-pub fn open_in_vs_code(file_paths: &[impl AsRef<OsStr>]) {
-    if file_paths.is_empty() {
-        eprintln!("No file paths provided to open in VS Code.");
-        return;
-    }
-
-    let paths_owned: Vec<OsString> = file_paths.iter().map(|p| p.as_ref().to_owned()).collect();
-
-    println!("Opening {} file/folder(s) in VS Code...", paths_owned.len());
-
-    let mut cmd;
-
-    if cfg!(target_os = "windows") {
-        cmd = Command::new("cmd");
-        cmd.arg("/C");
-        cmd.arg("code");
-    } else {
-        cmd = Command::new("sh");
-        cmd.arg("-c");
-        cmd.arg("code \"$@\"");
-        cmd.arg("_");
-    };
-
-    cmd.args(&paths_owned);
-
-    let cmd_result = cmd.output();
-
-    match cmd_result {
-        Ok(output) => {
-            if !output.status.success() {
-                println!(
-                    "{}",
-                    style(format!(
-                        "[WARN] VS Code task finished with a non-success status: {}",
-                        output.status
-                    ))
-                    .yellow()
-                );
-
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                if !stderr.trim().is_empty() {
-                    eprintln!("VS Code stderr:\n{}", stderr.trim());
-                }
-
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                if !stdout.trim().is_empty() {
-                    eprintln!("VS Code stdout:\n{}", stdout.trim());
-                }
-            }
-        }
-        Err(e) => {
-            println!(
-                "{}",
-                style(format!("[WARN] Could not execute VS Code task. Is 'code' in your system's PATH? Error: {}",
-                    e
-                ))
-                .yellow()
-            );
-        }
-    }
 }
 
 /// Checks if the app is the only process attached to the console.
@@ -152,6 +88,9 @@ pub fn prompt_for_rerun() -> bool {
     eprintln!("\nPress 'Enter' to quit, or any other key to run again...");
 
     let term = console::Term::stdout();
+
+    term.flush().unwrap();
+
     let key_result = term.read_key();
 
     match key_result {

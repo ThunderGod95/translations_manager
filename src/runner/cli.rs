@@ -25,25 +25,25 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand, Clone, PartialEq, Eq)]
 pub enum Command {
-    /// 📚 Compile translated chapters into distributable formats (EPUB, PDF)
+    /// Compile translated chapters into distributable formats (EPUB, PDF)
     #[command(
         name = "distribute",
         long_about = "Compiles all translated chapters into final EPUB and PDF files.
-This command uses Pandoc to create book-like volumes, with chapter 
+This command uses Pandoc to create book-like volumes, with chapter
 separation defined in the 'sep.json' configuration file."
     )]
     Distribute(DistArgs),
 
-    /// 🔎 Search translated chapters for text or regex patterns
+    /// Search translated chapters for text or regex patterns
     #[command(
         name = "find",
-        long_about = "Searches for a text or regex pattern within a specified range of 
-translated chapter files. Reports the first occurrence and a total 
+        long_about = "Searches for a text or regex pattern within a specified range of
+translated chapter files. Reports the first occurrence and a total
 count of all matches."
     )]
     Find(FindArgs),
 
-    /// 🖋️ Prepare an untranslated chapter for translation
+    /// Prepare an untranslated chapter for translation
     #[command(
         name = "glossary",
         long_about = "Prepares the next untranslated chapter for translation by:
@@ -53,39 +53,44 @@ count of all matches."
     )]
     Glossary,
 
-    /// ✨ Initialize a new translation project directory
+    /// Initialize a new translation project directory
     #[command(
         name = "init",
         long_about = "Sets up a new translation project in the current directory.
-This creates the necessary directory structure (e.g., 'source', 
+This creates the necessary directory structure (e.g., 'source',
 'translated') and default configuration files to get started."
     )]
     Init(InitArgs),
 
-    /// ⚙️ Edit internal application configuration files
+    /// Edit internal application configuration files
     #[command(
         name = "internal",
-        long_about = "Opens the internal application configuration files in VS Code for 
-manual editing. This command requires VS Code to be installed 
-and available in the system's PATH."
+        long_about = "Opens the internal application configuration files in the preferred editor for
+manual editing."
     )]
     Internal,
 
-    /// 📖 Open project files or chapters in VS Code
+    /// Open project files or chapters in the preferred editor.
     #[command(
         name = "open",
-        long_about = "Quickly opens specified chapter files (source or translated) or 
-the entire project root directory in Visual Studio Code."
+        long_about = "Quickly opens specified chapter files (translated) or
+the entire project root directory in the preferred editor."
     )]
     Open(OpenArgs),
 
-    /// 🔁 Find and replace text or regex patterns in translated chapters
+    /// Find and replace text or regex patterns in translated chapters
     #[command(
         name = "replace",
-        long_about = "Finds and replaces all occurrences of a pattern (text or regex) 
+        long_about = "Finds and replaces all occurrences of a pattern (text or regex)
 with new text within a specified range of translated chapter files."
     )]
     Replace(ReplaceArgs),
+
+    #[command(
+        name = "next",
+        long_about = "Runs the glossary command for the next untranslated chapter."
+    )]
+    Next,
 }
 
 impl Command {
@@ -98,6 +103,7 @@ impl Command {
             Task::Open => Command::Open(OpenArgs::default()),
             Task::Init => Command::Init(InitArgs::default()),
             Task::Internal => Command::Internal,
+            Task::Next => Command::Next,
         }
     }
 }
@@ -169,6 +175,7 @@ pub enum Task {
     Distribute,
     /// The chapter opening task
     Open,
+    Next,
     Init,
     /// Editing the config task
     Internal,

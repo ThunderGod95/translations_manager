@@ -1,37 +1,38 @@
-//! Contains the core business logic for executing each command.
-
 use std::{
-    fs::File,
+    fs::{self, File},
     io::BufWriter,
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 use anyhow::{Result, anyhow, bail};
 use console::style;
+use dialoguer::{Confirm, theme::ColorfulTheme};
 use strum::VariantArray;
 
 use super::cli::*;
 use crate::{
     config::CONFIG,
     distribute::*,
+    editor,
     find::*,
-    glossary::glossary_processor,
+    glossary::{find_last_chapter, glossary_processor},
     init::*,
     replace::replace_in_folder,
     runner::cli::DistArgs,
-    util::{get_cache_path, get_config_file_path, open_in_vs_code},
+    util::{get_cache_path, get_config_file_path},
 };
 
-pub fn run_glossary_task(project_path: &PathBuf) -> Result<()> {
-    let assets_path = project_path.join(&CONFIG.assets_folder);
-    let translations_path = project_path.join(&CONFIG.translations_folder);
+pub fn run_glossary_task(project_path: &Path) -> Result<()> {
+    let config = &CONFIG.read().unwrap();
+    let assets_path = project_path.join(&config.assets_folder);
+    let translations_path = project_path.join(&config.translations_folder);
 
     glossary_processor(assets_path, translations_path)?;
 
     Ok(())
 }
 
-pub fn run_find_task(args: &FindArgs, project_path: &PathBuf) -> Result<()> {
+pub fn run_find_task(args: &FindArgs, project_name: &str, project_path: &Path) -> Result<()> {
     let FindArgs {
         pattern,
         regex: use_regex,
@@ -41,7 +42,7 @@ pub fn run_find_task(args: &FindArgs, project_path: &PathBuf) -> Result<()> {
         silent,
     } = args;
 
-    let folder_path = project_path.join(&CONFIG.translations_folder);
+    let folder_path = project_path.join(&CONFIG.read().unwrap().translations_folder);
     let search_pattern = pattern.as_ref().unwrap();
     let write_path = write_path.as_ref();
 
@@ -54,7 +55,7 @@ pub fn run_find_task(args: &FindArgs, project_path: &PathBuf) -> Result<()> {
     )?;
 
     if matches.is_empty() {
-        println!("No match found in any file in: {}", folder_path.display());
+        println!("No match found in any chapter in project: {}", project_name);
         return Ok(());
     }
 
@@ -89,7 +90,7 @@ pub fn run_internal_task() -> Result<()> {
     let config_path = get_config_file_path()?;
     let cache_path = get_cache_path()?;
 
-    open_in_vs_code(&[config_path, cache_path]);
+    editor::open_in_editor(&[config_path, cache_path])?;
 
     Ok(())
 }
@@ -97,9 +98,10 @@ pub fn run_internal_task() -> Result<()> {
 pub fn run_dist_task(args: &DistArgs, project_path: &Path) -> Result<()> {
     println!("Running 'distribute' on {}", project_path.display());
 
-    let translations_dir = project_path.join(&CONFIG.translations_folder);
-    let assets_dir = project_path.join(&CONFIG.assets_folder);
-    let dist_dir = project_path.join(&CONFIG.dist_folder);
+    let config = &CONFIG.read().unwrap();
+    let translations_dir = project_path.join(&config.translations_folder);
+    let assets_dir = project_path.join(&config.assets_folder);
+    let dist_dir = project_path.join(&config.dist_folder);
 
     let formats_to_build = if args.txt {
         println!(
@@ -139,7 +141,7 @@ pub fn run_replace_task(replace_args: &ReplaceArgs, project_path: &Path) -> Resu
         .as_deref()
         .ok_or_else(|| anyhow!("Missing required 'new' argument"))?;
 
-    let translations_dir = project_path.join(&CONFIG.translations_folder);
+    let translations_dir = project_path.join(&CONFIG.read().unwrap().translations_folder);
 
     let (total_replacements, total_files_updated) =
         replace_in_folder(translations_dir, old_text, new_text, *regex)?;
@@ -154,7 +156,7 @@ pub fn run_replace_task(replace_args: &ReplaceArgs, project_path: &Path) -> Resu
     Ok(())
 }
 
-pub fn run_open_task(open_args: &OpenArgs, project_path: &Path) {
+pub fn run_open_task(open_args: &OpenArgs, project_path: &Path) -> Result<()> {
     let chapter_nos = open_args.files.as_ref();
 
     if let Some(chapter_nos) = chapter_nos {
@@ -162,15 +164,17 @@ pub fn run_open_task(open_args: &OpenArgs, project_path: &Path) {
             .iter()
             .map(|no| {
                 project_path
-                    .join(&CONFIG.translations_folder)
+                    .join(&CONFIG.read().unwrap().translations_folder)
                     .join(format!("{}.md", no))
             })
             .collect();
 
-        open_in_vs_code(&chapter_paths);
+        editor::open_in_editor(&chapter_paths)?;
     } else {
-        open_in_vs_code(&[project_path]);
+        editor::open_in_editor(&[project_path])?;
     }
+
+    Ok(())
 }
 
 pub fn run_init_task(init_args: &InitArgs, base_path: &Path) -> Result<()> {
@@ -182,6 +186,52 @@ pub fn run_init_task(init_args: &InitArgs, base_path: &Path) -> Result<()> {
     write_embedded_dir(&TEMPLATE_DIR, project_path)?;
 
     println!("\nSuccessfully created: {}", project_name);
+
+    Ok(())
+}
+
+pub fn run_next_task(project_path: &Path) -> Result<()> {
+    let config = CONFIG.read().expect("Failed to acquire config lock");
+
+    let raws_dir = project_path.join(&config.raws_folder);
+
+    if !raws_dir.exists() {
+        bail!("'raws' folder not found. Please directly use the `glossary` command.");
+    }
+
+    let assets_dir = project_path.join(&config.assets_folder);
+    let translations_dir = project_path.join(&config.translations_folder);
+
+    let last_chapter = find_last_chapter(&translations_dir)?;
+
+    println!("Last Chapter: {}", last_chapter);
+    println!("Next Chapter: {}", last_chapter + 1);
+
+    let next_chapter_path = raws_dir.join(format!("{}.md", last_chapter + 1));
+    let cr_ch_path = assets_dir.join(&config.chapter_file);
+
+    if let Err(e) = fs::copy(&next_chapter_path, &cr_ch_path) {
+        let error_msg = if e.kind() == std::io::ErrorKind::NotFound {
+            format!("Next chapter file not found: {:?}", next_chapter_path)
+        } else {
+            format!("System error copying chapter: {}", e)
+        };
+
+        let confirm = Confirm::with_theme(&ColorfulTheme::default())
+            .default(true)
+            .show_default(true)
+            .with_prompt(format!(
+                "{} \nDo you still want to proceed with the existing chapter?",
+                error_msg
+            ))
+            .interact()?;
+
+        if !confirm {
+            return Ok(());
+        }
+    }
+
+    run_glossary_task(project_path)?;
 
     Ok(())
 }

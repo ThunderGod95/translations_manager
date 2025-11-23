@@ -11,13 +11,12 @@ path = "src/main.rs"
 aho-corasick = "1.1.4"
 anyhow = "1.0.100"
 clap = { version = "4.5.51", features = ["derive", "wrap_help"] }
-dialoguer = { version = "0.12.0", features = ["history"] }
+dialoguer = { version = "0.12.0", features = ["history", "fuzzy-select"] }
 directories = "6.0.0"
 itertools = "0.14.0"
 jieba-rs = "0.8.1"
 prettytable-rs = "0.10.0"
 rayon = "1.11.0"
-regex = "1.12.2"
 sanitize-filename = "0.6.0"
 serde = { version = "1.0.228", features = ["derive"] }
 simd-json = { version = "0.17.0", features = ["beef"] }
@@ -34,6 +33,9 @@ time = { version = "0.3.44", features = ["macros", "formatting"] }
 jwalk = "0.8.1"
 threadpool = "1.8.1"
 num_cpus = "1.17.0"
+indicatif = { version = "0.18.3", features = ["rayon"] }
+which = "8.0.0"
+fancy-regex = "0.16.2"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_System_Console"] }

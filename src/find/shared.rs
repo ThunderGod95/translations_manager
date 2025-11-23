@@ -11,7 +11,7 @@ pub(super) fn normalize_needle(needle: &str) -> String {
         .last()
         .map_or(false, |c| c.is_alphanumeric() || c == '_');
 
-    let normalized_search_pattern = regex::escape(needle);
+    let normalized_search_pattern = fancy_regex::escape(needle);
 
     let prefix = if starts_with_word { "\\b" } else { "" };
     let suffix = if ends_with_word { "\\b" } else { "" };

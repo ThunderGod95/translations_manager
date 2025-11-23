@@ -4,11 +4,12 @@ use std::fs::File;
 use std::path::Path;
 
 use super::Chapter;
-use crate::util::open_in_vs_code;
+use crate::editor;
 
 pub fn create_and_open_files(base_path: &Path, chapters: &Vec<Chapter>) -> Result<()> {
     let new_files: Vec<_> = chapters
         .iter()
+        .filter(|chapter| chapter.create_file)
         .map(|chapter| base_path.join(format!("{}{}", chapter.expected_number, ".md")))
         .collect();
 
@@ -26,7 +27,7 @@ pub fn create_and_open_files(base_path: &Path, chapters: &Vec<Chapter>) -> Resul
     }
 
     if !paths_to_open.is_empty() {
-        open_in_vs_code(&paths_to_open);
+        editor::open_in_editor(&paths_to_open)?;
     }
 
     println!("Created/Verified {} file(s)", new_files.len());

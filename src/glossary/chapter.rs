@@ -1,9 +1,9 @@
-use std::{path::Path, sync::LazyLock};
+use std::{fs, path::Path, sync::LazyLock};
 
 use anyhow::{Context, Result, bail};
 use console::style;
-use jwalk::WalkDir;
-use regex::Regex;
+use dialoguer::{Confirm, theme::ColorfulTheme};
+use fancy_regex::Regex;
 
 use super::Chapter;
 
@@ -15,10 +15,31 @@ pub fn process_chapters<'a>(
     cr_ch_text: &'a str,
     last_chapter_number: usize,
 ) -> Result<Vec<Chapter>> {
+    if cr_ch_text.trim().is_empty() {
+        bail!("No chapters found. A chapter must start with '第...章'.")
+    }
+
     let chunks: Vec<_> = RE_SPLITTER.split(cr_ch_text.trim()).skip(1).collect();
 
     if chunks.is_empty() {
-        bail!("No chapters found. A chapter must start with '第...章'.");
+        println!("No chapters found. A chapter must start with '第...章'.");
+
+        let confirm = Confirm::with_theme(&ColorfulTheme::default())
+            .with_prompt("Do you still want to continue?")
+            .default(false)
+            .show_default(true)
+            .interact()?;
+
+        if !confirm {
+            bail!("Task cancelled.")
+        }
+
+        return Ok(vec![Chapter {
+            expected_number: 0,
+            expected_title: "".to_string(),
+            text: cr_ch_text.to_string(),
+            create_file: false,
+        }]);
     }
 
     println!("Found {} potential chapter(s).", chunks.len());
@@ -27,7 +48,8 @@ pub fn process_chapters<'a>(
     let mut processed_chapters: Vec<Chapter> = Vec::with_capacity(chunks.len());
 
     for chunk in chunks.into_iter() {
-        let Some(cap) = RE_PARSER.captures(chunk) else {
+        let chunk = chunk?;
+        let Some(cap) = RE_PARSER.captures(chunk)? else {
             println!(
                 "{}",
                 style(format!("[WARN] Failed to parse chapter chunk. Skipping...")).yellow()
@@ -48,6 +70,7 @@ pub fn process_chapters<'a>(
             expected_number,
             expected_title,
             text: chapter_text,
+            create_file: true,
         });
 
         expected_number += 1;
@@ -59,34 +82,33 @@ pub fn process_chapters<'a>(
 pub fn find_last_chapter(translations_path: impl AsRef<Path>) -> Result<usize> {
     let translations_path = translations_path.as_ref();
 
-    if !translations_path.exists() {
+    if !translations_path.exists() || !translations_path.is_dir() {
         bail!(
-            "The folder '{}' does not exist. Please check the path.",
-            translations_path.display()
-        );
-    }
-
-    if !translations_path.is_dir() {
-        bail!(
-            "The path '{}' is a file, not a folder. Please provide a path to a folder.",
+            "Path '{}' is not a valid directory.",
             translations_path.display()
         );
     }
 
     let mut max_chapter = 0;
 
-    let walker = WalkDir::new(&translations_path)
-        .min_depth(1)
-        .max_depth(1)
-        .skip_hidden(true);
+    let entries = fs::read_dir(translations_path).with_context(|| {
+        format!(
+            "Could not read directory '{}'. Check permissions.",
+            translations_path.display()
+        )
+    })?;
 
-    for entry in walker.into_iter() {
-        let entry = entry.with_context(|| {
-            format!(
-                "Could not read the files in folder '{}'. Do you have permission to open it?",
-                translations_path.display()
-            )
-        })?;
+    for entry in entries {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        if let Ok(ft) = entry.file_type() {
+            if !ft.is_file() {
+                continue;
+            }
+        }
 
         let file_name = entry.file_name();
 
@@ -95,22 +117,25 @@ pub fn find_last_chapter(translations_path: impl AsRef<Path>) -> Result<usize> {
             None => continue,
         };
 
-        if !name_str.ends_with(".md") {
+        let bytes = name_str.as_bytes();
+
+        if bytes.len() < 3 || &bytes[bytes.len() - 3..] != b".md" {
             continue;
         }
 
-        let end_of_num = name_str
-            .find(|c: char| !c.is_ascii_digit())
-            .unwrap_or(name_str.len());
+        let end_of_num = bytes
+            .iter()
+            .position(|&b| !b.is_ascii_digit())
+            .unwrap_or(bytes.len());
 
         if end_of_num == 0 {
             continue;
         }
 
-        let num_str = &name_str[..end_of_num];
-
-        if let Ok(num) = num_str.parse::<usize>() {
-            max_chapter = max_chapter.max(num);
+        if let Ok(num) = name_str[..end_of_num].parse::<usize>() {
+            if num > max_chapter {
+                max_chapter = num;
+            }
         }
     }
 

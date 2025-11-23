@@ -23,6 +23,8 @@ use data::*;
 use text::*;
 use util::*;
 
+pub use chapter::find_last_chapter;
+
 #[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Clone)]
 pub struct GlossaryEntry {
     pub en: String,
@@ -39,6 +41,7 @@ pub struct Chapter {
     pub expected_number: usize,
     pub expected_title: String,
     pub text: String,
+    pub create_file: bool,
 }
 
 struct GlossaryProcessor {
@@ -59,7 +62,7 @@ impl GlossaryProcessor {
         let assets_path = assets_path.as_ref().to_owned();
         let translations_path = translations_path.as_ref().to_owned();
 
-        let glossary_path = assets_path.join(&CONFIG.glossary_file);
+        let glossary_path = assets_path.join(&CONFIG.read().unwrap().glossary_file);
         let glossary_data = read_glossary(glossary_path).context(
             "Failed to read glossary file. Check if it exists and you have the permission to READ.",
         )?;
@@ -79,7 +82,7 @@ impl GlossaryProcessor {
     }
 
     fn process_new_chapters(&self) -> Result<()> {
-        let config = &CONFIG;
+        let config = &CONFIG.read().unwrap();
 
         // 1. Read and process chapter text
         let chapter_file_path = self.assets_path.join(&config.chapter_file);
@@ -195,7 +198,7 @@ impl GlossaryProcessor {
         micro_glossary_string: &str,
         combined_chapter_text: &str,
     ) -> Result<String> {
-        let config = &CONFIG;
+        let config = &CONFIG.read().unwrap();
         let prompt_template =
             read_to_string(self.assets_path.join(&config.translation_prompt_file))
                 .context("Failed to read translation prompt file")?;

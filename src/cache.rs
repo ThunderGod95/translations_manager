@@ -4,10 +4,12 @@ use std::fs;
 
 use crate::util::get_cache_path;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Cache {
     #[serde(rename = "lastProject")]
     pub last_project: String,
+    #[serde(rename = "hasRunBefore")]
+    pub has_run_before: bool,
 }
 
 pub fn read_cache() -> Result<Option<Cache>> {

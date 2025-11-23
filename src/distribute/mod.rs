@@ -70,7 +70,7 @@ pub fn distribute(
     let assets_dir = assets_dir.as_ref().to_path_buf();
     let output_sub_dir = prepare_output_directory(&dist_dir, dist_format)?;
 
-    let volumes = VolumeInfo::load(assets_dir.join(&CONFIG.sep_info_file))
+    let volumes = VolumeInfo::load(assets_dir.join(&CONFIG.read().unwrap().sep_info_file))
         .context("Failed to load volume configuration. Check your assets directory.")?;
 
     println!("Creating {}s... (Total: {})", dist_format, volumes.len());

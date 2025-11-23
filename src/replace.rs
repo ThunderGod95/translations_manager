@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, bail};
+use fancy_regex::{Captures, Regex};
 use jwalk::WalkDir;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
-use regex::{Captures, Regex};
 use std::{fs, path::Path, sync::Arc};
 
 pub fn replace(search_regex: &Regex, replacement: &str, haystack: &str) -> (usize, String) {
@@ -58,7 +58,7 @@ pub fn replace_in_folder(
         Regex::new(search_pattern)
             .with_context(|| format!("Invalid regex pattern provided: '{}'", search_pattern))?
     } else {
-        Regex::new(&format!(r"(?i)\b{}\b", regex::escape(search_pattern)))
+        Regex::new(&format!(r"(?i)\b{}\b", fancy_regex::escape(search_pattern)))
             .with_context(|| format!("Invalid search pattern provided: '{}'", search_pattern))?
     };
 

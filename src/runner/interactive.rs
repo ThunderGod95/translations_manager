@@ -15,6 +15,7 @@ pub fn populate_arguments(command: &mut Command) -> Result<()> {
         Command::Find(find_args) => populate_find_arguments(find_args),
         Command::Replace(replace_args) => populate_replace_arguments(replace_args),
         Command::Init(init_args) => populate_init_arguments(init_args),
+        Command::Next => Ok(()),
     }
 }
 
@@ -34,16 +35,6 @@ pub fn populate_find_arguments(find_args: &mut FindArgs) -> Result<()> {
         .history_with(&mut history)
         .interact_text()?;
 
-    let start_num: String = Input::with_theme(&theme)
-        .with_prompt("Enter start file number (optional)")
-        .allow_empty(true)
-        .interact_text()?;
-
-    let end_num: String = Input::with_theme(&theme)
-        .with_prompt("Enter end file number (optional)")
-        .allow_empty(true)
-        .interact_text()?;
-
     let write_to: String = Input::with_theme(&theme)
         .with_prompt("Output file to write paragraphs to (optional)")
         .allow_empty(true)
@@ -55,36 +46,20 @@ pub fn populate_find_arguments(find_args: &mut FindArgs) -> Result<()> {
         .show_default(true)
         .interact()?;
 
-    let silent = Confirm::with_theme(&theme)
-        .with_prompt("Suppress the detailed table output, showing only the summary?")
-        .default(false)
-        .show_default(true)
-        .interact()?;
-
     find_args.pattern = Some(pattern);
-    find_args.start = if !start_num.is_empty() {
-        match start_num.parse::<usize>() {
-            Ok(num) => Some(num),
-            Err(_) => None,
-        }
-    } else {
-        None
-    };
-    find_args.end = if !end_num.is_empty() {
-        match end_num.parse::<usize>() {
-            Ok(num) => Some(num),
-            Err(_) => None,
-        }
-    } else {
-        None
-    };
     find_args.write = if !write_to.is_empty() {
+        let silent = Confirm::with_theme(&theme)
+            .with_prompt("Suppress the detailed table output, showing only the summary?")
+            .default(false)
+            .show_default(true)
+            .interact()?;
+
+        find_args.silent = silent;
         Some(PathBuf::from(write_to))
     } else {
         None
     };
     find_args.regex = regex;
-    find_args.silent = silent;
 
     Ok(())
 }

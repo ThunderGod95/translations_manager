@@ -1,10 +1,10 @@
 use std::path::Path;
+use std::{env, fs};
 
 use anyhow::{Context, Result, bail};
 use console::style;
+use dialoguer::FuzzySelect;
 use dialoguer::theme::ColorfulTheme;
-use dialoguer::{Confirm, Select};
-use jwalk::WalkDir;
 
 use crate::cache::*;
 
@@ -12,13 +12,27 @@ pub fn select_project(base_path: impl AsRef<Path>) -> Result<String> {
     let base_path = base_path.as_ref();
     let projects = get_projects(base_path)?;
 
+    if let Ok(cwd) = env::current_dir() {
+        let base = cwd.file_name().unwrap().to_str().unwrap().to_owned();
+
+        if projects.contains(&base) {
+            println!(
+                "Detected application running in known project. Auto-selecting: {}",
+                base
+            );
+            return Ok(base);
+        }
+    }
+
+    let mut cache = read_cache()?.unwrap_or_default();
+
     if projects.len() == 1 {
         let project_name = projects.first().unwrap().clone();
         println!("\nOnly one project found. Auto-selecting: {}", project_name);
 
-        if let Err(e) = write_cache(Cache {
-            last_project: project_name.clone(),
-        }) {
+        cache.last_project = project_name.clone();
+
+        if let Err(e) = write_cache(cache) {
             println!(
                 "{}",
                 style(format!("[WARN] Could not write to cache file: {}", e)).yellow()
@@ -28,36 +42,27 @@ pub fn select_project(base_path: impl AsRef<Path>) -> Result<String> {
         return Ok(project_name);
     }
 
-    if let Some(cache) = read_cache()? {
-        let last_project = cache.last_project;
+    let default_index = if !cache.last_project.is_empty() {
+        projects
+            .iter()
+            .position(|p| p == &cache.last_project)
+            .unwrap_or(0)
+    } else {
+        0
+    };
 
-        if projects.binary_search(&last_project).is_ok() {
-            let use_last = Confirm::with_theme(&ColorfulTheme::default())
-                .with_prompt(format!("Use last selected project: {}", &last_project))
-                .default(true)
-                .show_default(true)
-                .interact()
-                .context("Failed to render confirmation prompt")?;
-
-            if use_last {
-                println!("\nUsing cached project: {}\n", &last_project);
-                return Ok(last_project);
-            }
-        }
-    }
-
-    let project_index = Select::with_theme(&ColorfulTheme::default())
-        .with_prompt("Select a translation project:")
+    let project_index = FuzzySelect::with_theme(&ColorfulTheme::default())
+        .with_prompt("Select a translation project")
         .items(&projects)
-        .default(0)
+        .default(default_index)
         .interact()
         .context("Failed to render selection prompt")?;
 
     let selected_project = projects[project_index].clone();
 
-    if let Err(e) = write_cache(Cache {
-        last_project: selected_project.clone(),
-    }) {
+    cache.last_project = selected_project.clone();
+
+    if let Err(e) = write_cache(cache) {
         println!(
             "{}",
             style(format!("[WARN] Could not write to cache file: {}", e)).yellow()
@@ -75,22 +80,15 @@ pub fn get_projects(base_path: &Path) -> Result<Vec<String>> {
         );
     }
 
-    let mut projects: Vec<_> = WalkDir::new(base_path)
-        .max_depth(1)
-        .into_iter()
-        .filter_map(|entry_result| {
-            let entry = entry_result.ok()?;
+    let mut projects: Vec<String> = fs::read_dir(base_path)?
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let path = entry.path();
 
-            if entry.depth() == 0 {
-                return None;
+            if path.is_dir() && path.file_name()?.to_str()? != "tscripts" {
+                return Some(path.file_name()?.to_str()?.to_string());
             }
-
-            let file_name = entry.file_name();
-            if !entry.file_type().is_dir() || file_name == "tscripts" {
-                return None;
-            }
-
-            file_name.to_str().map(String::from)
+            None
         })
         .collect();
 

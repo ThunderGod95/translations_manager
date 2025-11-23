@@ -2,9 +2,9 @@ use std::{collections::HashSet, sync::LazyLock};
 
 use aho_corasick::AhoCorasick;
 use bk_tree::{BKTree, metrics::Levenshtein};
+use fancy_regex::Regex;
 use jieba_rs::Jieba;
 use rayon::prelude::*;
-use regex::Regex;
 use unicode_normalization::UnicodeNormalization;
 
 /// This regex matches any character that is NOT a Han character,
@@ -12,16 +12,21 @@ use unicode_normalization::UnicodeNormalization;
 static RE_PREPROCESS: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"[^\p{Han}\p{P}\p{N}]").unwrap());
 
+/// Normalizes the input string and removes any characters that are not
+/// Han characters, numbers, or punctuation.
 pub fn preprocess_chinese_text<'a>(text: &str) -> String {
     let normalized = text.nfkc().collect::<String>();
     RE_PREPROCESS.replace_all(&normalized, "").to_string()
 }
 
+/// Performs an exact search for multiple terms simultaneously using the
+/// Aho-Corasick algorithm and returns a set of unique matches.
 pub fn aho_corasick_find_all<'a>(terms: &'a Vec<String>, text: &str) -> HashSet<&'a str> {
     let ac = AhoCorasick::new(terms).unwrap();
+
     let mut found_clean_terms = HashSet::new();
 
-    for mat in ac.find_iter(text) {
+    for mat in ac.find_overlapping_iter(text) {
         let pattern_id = mat.pattern().as_usize();
         let clean_term = terms[pattern_id].as_str();
         found_clean_terms.insert(clean_term);
@@ -30,6 +35,8 @@ pub fn aho_corasick_find_all<'a>(terms: &'a Vec<String>, text: &str) -> HashSet<
     found_clean_terms
 }
 
+/// Segments the text into words and uses a BK-Tree to find terms that
+/// match within a specified threshold.
 pub fn chinese_fuzzy_search<'a>(
     terms: &'a [&'a str],
     text: &'a str,

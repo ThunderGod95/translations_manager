@@ -1,10 +1,10 @@
-use std::io::{BufRead, BufReader};
 use std::path::Path;
 
 use anyhow::Result;
+use fancy_regex::Regex;
+use indicatif::{ParallelProgressIterator, ProgressBar, ProgressStyle};
 use rayon::prelude::*;
-use regex::Regex;
-use std::fs::File;
+use std::fs;
 
 use crate::util::collect_numbered_file_paths;
 
@@ -31,27 +31,34 @@ pub fn find_matches_in_folder(
 
     let matcher = Matcher::new(&pattern_string, use_regex)?;
 
+    let num_files = files_to_read.len() as u64;
+    let pb = ProgressBar::new(num_files);
+
+    pb.set_style(ProgressStyle::default_bar()
+        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({percent}%) - Searching files...")
+        .expect("Failed to set progress bar style")
+        .progress_chars("#>-")
+    );
+
     let results: Vec<(usize, Vec<Match>)> = files_to_read
         .par_iter()
+        .progress_with(pb)
         .filter_map(|path| {
             let file_number = path
-                .file_name()
+                .file_prefix()
                 .and_then(|s| s.to_str())
-                .and_then(|s| s.strip_suffix(".md"))
                 .and_then(|name| name.parse::<usize>().ok())
-                .unwrap_or(0); // We can safely unwrap because we know file_paths only contains numbered files.
+                .unwrap_or(0); // We can safely unwrap because we know files_to_read only contains numbered files.
 
-            let file = match File::open(path) {
-                Ok(f) => f,
+            let content = match fs::read_to_string(path) {
+                Ok(c) => c,
                 Err(e) => {
-                    eprintln!("[WARN] Failed to open file {}: {}", path.display(), e);
+                    eprintln!("[WARN] Failed to read file {}: {}", path.display(), e);
                     return None;
                 }
             };
 
-            let reader = BufReader::new(file);
-
-            let matches = matcher.find_matches(reader);
+            let matches = matcher.find_matches(&content);
 
             if matches.is_empty() {
                 None
@@ -69,9 +76,9 @@ pub fn find_matches_in_file(
     search_pattern: &str,
     use_regex: bool,
 ) -> Result<Vec<Match>> {
-    let content = BufReader::new(File::open(file_path)?);
+    let content = fs::read_to_string(file_path)?;
     let matcher = Matcher::new(search_pattern, use_regex)?;
-    Ok(matcher.find_matches(content))
+    Ok(matcher.find_matches(&content))
 }
 
 /// Internal struct to handle single-pattern matching.
@@ -92,24 +99,27 @@ impl Matcher {
         })
     }
 
-    fn find_matches(&self, haystack: BufReader<File>) -> Vec<Match> {
-        let results = haystack
+    fn find_matches(&self, haystack: &str) -> Vec<Match> {
+        // If the regex doesn't match anywhere in the file, don't pay the cost
+        // of splitting lines and allocating strings.
+        if !self.regex.is_match(haystack).unwrap_or(false) {
+            return Vec::new();
+        }
+
+        haystack
             .lines()
             .enumerate()
-            .filter_map(|(num, line_result)| {
-                line_result.ok().and_then(|line_content| {
-                    if self.regex.is_match(&line_content) {
-                        Some(Match {
-                            line_number: num + 1,
-                            line_content,
-                        })
-                    } else {
-                        None
-                    }
-                })
+            .filter_map(|(num, line)| {
+                let is_match = self.regex.is_match(line).unwrap_or(false);
+                if is_match {
+                    Some(Match {
+                        line_number: num + 1,
+                        line_content: line.to_string(),
+                    })
+                } else {
+                    None
+                }
             })
-            .collect::<Vec<Match>>();
-
-        results
+            .collect()
     }
 }
