@@ -5,12 +5,12 @@ use std::{
 };
 
 use anyhow::{Result, anyhow, bail};
-use console::style;
 use dialoguer::{Confirm, theme::ColorfulTheme};
 use strum::VariantArray;
 
 use super::cli::*;
 use crate::{
+    clean,
     config::CONFIG,
     distribute::*,
     editor,
@@ -22,12 +22,8 @@ use crate::{
     util::{get_cache_path, get_config_file_path},
 };
 
-pub fn run_glossary_task(project_path: &Path) -> Result<()> {
-    let config = &CONFIG.read().unwrap();
-    let assets_path = project_path.join(&config.assets_folder);
-    let translations_path = project_path.join(&config.translations_folder);
-
-    glossary_processor(assets_path, translations_path)?;
+pub fn run_glossary_task(project_name: &str) -> Result<()> {
+    glossary_processor(project_name, true)?;
 
     Ok(())
 }
@@ -95,36 +91,33 @@ pub fn run_internal_task() -> Result<()> {
     Ok(())
 }
 
-pub fn run_dist_task(args: &DistArgs, project_path: &Path) -> Result<()> {
-    println!("Running 'distribute' on {}", project_path.display());
+pub fn run_dist_task(args: &DistArgs, project_name: &str) -> Result<()> {
+    println!("Running 'distribute' on {project_name}");
 
-    let config = &CONFIG.read().unwrap();
-    let translations_dir = project_path.join(&config.translations_folder);
-    let assets_dir = project_path.join(&config.assets_folder);
-    let dist_dir = project_path.join(&config.dist_folder);
+    let distributor = Distributor::new(project_name)?;
 
-    let formats_to_build = if args.txt {
-        println!(
-            "{}",
-            style(format!(
-                "[WARN] Distributing as TXT. Disabling other formats..."
-            ))
-            .yellow()
-        );
-        &[DistributionFormat::TXT]
-    } else {
-        DistributionFormat::VARIANTS
-    };
+    let mut volumes = args.volumes.clone();
+    volumes.sort();
+    volumes.dedup();
 
-    let results: Vec<Result<()>> = formats_to_build
-        .iter()
-        .map(|&format| distribute(format, &translations_dir, &assets_dir, &dist_dir))
-        .collect();
-
-    for (format, result) in formats_to_build.iter().zip(results.iter()) {
-        if let Err(e) = result {
-            bail!("{} creation failed. Reason: {}", format, e);
+    if args.formats.is_empty() {
+        for format in DistributionFormat::VARIANTS {
+            distributor.add(*format, &volumes)?;
         }
+    } else {
+        let mut formats = args.formats.clone();
+        formats.sort();
+        formats.dedup();
+
+        for format in &formats {
+            distributor.add(*format, &volumes)?;
+        }
+    }
+
+    let result = distributor.wait();
+
+    if let Err(e) = result {
+        bail!("Task failed. Reason: {}", e);
     }
 
     Ok(())
@@ -190,7 +183,7 @@ pub fn run_init_task(init_args: &InitArgs, base_path: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn run_next_task(project_path: &Path) -> Result<()> {
+pub fn run_next_task(project_name: &str, project_path: &Path) -> Result<()> {
     let config = CONFIG.read().expect("Failed to acquire config lock");
 
     let raws_dir = project_path.join(&config.raws_folder);
@@ -231,7 +224,15 @@ pub fn run_next_task(project_path: &Path) -> Result<()> {
         }
     }
 
-    run_glossary_task(project_path)?;
+    glossary_processor(project_name, false)?;
 
     Ok(())
+}
+
+pub fn run_clean_task(args: &CleanArgs, project_path: &Path) -> Result<()> {
+    if let Some(file) = args.file {
+        clean::clean_chapter(&project_path, file)
+    } else {
+        clean::clean_project(&project_path)
+    }
 }

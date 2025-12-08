@@ -6,7 +6,6 @@ use std::{
 
 use anyhow::{Context, Result, anyhow, bail};
 use directories::ProjectDirs;
-use jwalk::WalkDir;
 use time::{OffsetDateTime, macros::format_description};
 
 use crate::config::{CONFIG, PROJECT_PATH_QUALIFIERS};
@@ -123,15 +122,16 @@ pub fn is_file_empty(path: impl AsRef<Path>) -> bool {
                     Err(_) => return true,
                 };
 
-                let has_visible_content = content
-                    .chars()
-                    .any(|c| c.is_alphanumeric() || c.is_ascii_punctuation());
-
-                !has_visible_content
+                is_string_empty(&content)
             }
         }
         Err(_) => true,
     }
+}
+
+pub fn is_string_empty(txt: &str) -> bool {
+    !txt.chars()
+        .any(|c| c.is_alphanumeric() || c.is_ascii_punctuation())
 }
 
 pub fn get_current_date() -> Result<String> {
@@ -152,12 +152,11 @@ pub fn collect_numbered_file_paths(
     let check_format = format.is_some();
     let format = format.unwrap_or("");
 
-    let mut entries: Vec<(usize, PathBuf, u64)> = WalkDir::new(input_dir)
-        .max_depth(1)
-        .into_iter()
+    let mut entries: Vec<(usize, PathBuf, u64)> = std::fs::read_dir(input_dir)
+        .with_context(|| format!("Failed to read directory: {}", input_dir.display()))?
         .filter_map(Result::ok)
         .filter_map(|entry| {
-            if !entry.file_type().is_file() {
+            if !entry.file_type().map(|ft| ft.is_file()).unwrap_or(false) {
                 return None;
             }
 
@@ -218,4 +217,83 @@ pub fn collect_numbered_file_paths(
     }
 
     Ok((file_paths, total_size))
+}
+
+pub fn backup(og_path: &Path) -> Result<()> {
+    if og_path.is_dir() {
+        backup::backup_folder(&og_path)
+    } else {
+        backup::backup_file(&og_path)
+    }
+}
+
+mod backup {
+    use std::fs;
+    use std::path::Path;
+
+    use anyhow::{Context, Result, anyhow};
+
+    pub fn backup_folder(og_path: &Path) -> Result<()> {
+        let backup_path = og_path.join(".backup");
+
+        create_backup_directory(&backup_path)?;
+        copy_folder_to_backup(og_path, &backup_path)?;
+
+        Ok(())
+    }
+
+    pub fn backup_file(file_path: &Path) -> Result<()> {
+        let parent = file_path.parent();
+        let base = parent.unwrap_or(Path::new(""));
+        let backup_path = base.join(".backup");
+
+        create_backup_directory(&backup_path)?;
+        copy_file_to_backup(&file_path, &backup_path)?;
+
+        Ok(())
+    }
+
+    fn create_backup_directory(backup_path: &Path) -> Result<()> {
+        fs::create_dir_all(backup_path).with_context(|| {
+            format!(
+                "Failed to create backup directory: {}",
+                backup_path.display()
+            )
+        })?;
+
+        println!("Created backup directory: {}\n", backup_path.display());
+        Ok(())
+    }
+
+    fn copy_folder_to_backup(source_path: &Path, backup_path: &Path) -> Result<()> {
+        for entry in fs::read_dir(source_path)? {
+            let source_file = entry?.path();
+
+            if source_file == backup_path {
+                continue;
+            }
+
+            copy_file_to_backup(&source_file, &backup_path)?;
+        }
+
+        Ok(())
+    }
+
+    fn copy_file_to_backup(source_file: &Path, backup_path: &Path) -> Result<()> {
+        let file_name = source_file
+            .file_name()
+            .ok_or_else(|| anyhow!("Invalid file name in path: {}", source_file.display()))?;
+
+        let backup_file = backup_path.join(file_name);
+
+        fs::copy(&source_file, &backup_file).with_context(|| {
+            format!(
+                "Failed to backup {} to {}",
+                source_file.display(),
+                backup_file.display()
+            )
+        })?;
+
+        Ok(())
+    }
 }

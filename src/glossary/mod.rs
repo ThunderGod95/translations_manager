@@ -7,7 +7,6 @@ use dialoguer::{Confirm, theme::ColorfulTheme};
 
 use std::{
     collections::{HashMap, HashSet},
-    path::{Path, PathBuf},
     time::Instant,
 };
 
@@ -17,7 +16,10 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::fs::read_to_string;
 
-use crate::{config::CONFIG, util::is_file_empty};
+use crate::{
+    config::{CONFIG, ProjectPaths},
+    util::is_file_empty,
+};
 use chapter::*;
 use data::*;
 use text::*;
@@ -44,23 +46,19 @@ pub struct Chapter {
     pub create_file: bool,
 }
 
+#[derive(Debug)]
 struct GlossaryProcessor {
     glossary_data: Vec<GlossaryEntry>,
     original_to_clean_map: HashMap<String, String>,
     valid_clean_terms: Vec<String>,
-    assets_path: PathBuf,
-    translations_path: PathBuf,
+    paths: ProjectPaths,
     last_chapter_num: usize,
+    write_raw: bool,
 }
 
 impl GlossaryProcessor {
-    fn new(
-        assets_path: impl AsRef<Path>,
-        translations_path: impl AsRef<Path>,
-        last_chapter_num: usize,
-    ) -> Result<Self> {
-        let assets_path = assets_path.as_ref().to_owned();
-        let translations_path = translations_path.as_ref().to_owned();
+    fn new(paths: ProjectPaths, last_chapter_num: usize, write_raw: bool) -> Result<Self> {
+        let assets_path = &paths.assets_folder;
 
         let glossary_path = assets_path.join(&CONFIG.read().unwrap().glossary_file);
         let glossary_data = read_glossary(glossary_path).context(
@@ -75,9 +73,9 @@ impl GlossaryProcessor {
             glossary_data,
             original_to_clean_map,
             valid_clean_terms,
-            assets_path,
-            translations_path,
+            paths,
             last_chapter_num,
+            write_raw,
         })
     }
 
@@ -85,7 +83,7 @@ impl GlossaryProcessor {
         let config = &CONFIG.read().unwrap();
 
         // 1. Read and process chapter text
-        let chapter_file_path = self.assets_path.join(&config.chapter_file);
+        let chapter_file_path = self.paths.assets_folder.join(&config.chapter_file);
         let chapter_file =
             read_to_string(chapter_file_path).context("Failed to read chapter file.")?;
 
@@ -120,10 +118,13 @@ impl GlossaryProcessor {
         let final_prompt_string =
             self.build_final_prompt(&micro_glossary_string, &combined_chapter_text)?;
 
-        paste_glossary(final_prompt_string)?;
+        paste_glossary(&final_prompt_string)?;
 
-        // 5. Create placeholder files for translation
-        create_and_open_files(&self.translations_path, &chapters)?;
+        // 5. Create raws and translations file.
+        if self.write_raw {
+            write_raws(&self.paths.raws_folder, &chapters);
+        }
+        create_and_open_files(&self.paths.translations_folder, &chapters)?;
 
         Ok(())
     }
@@ -199,9 +200,12 @@ impl GlossaryProcessor {
         combined_chapter_text: &str,
     ) -> Result<String> {
         let config = &CONFIG.read().unwrap();
-        let prompt_template =
-            read_to_string(self.assets_path.join(&config.translation_prompt_file))
-                .context("Failed to read translation prompt file")?;
+        let prompt_template = read_to_string(
+            self.paths
+                .assets_folder
+                .join(&config.translation_prompt_file),
+        )
+        .context("Failed to read translation prompt file")?;
 
         Ok(format!(
             "{}\n\n**Glossary**\n\n{}\n\n---\n\n**Chinese Chapter(s) to Translate:**\n{}",
@@ -210,14 +214,12 @@ impl GlossaryProcessor {
     }
 }
 
-pub fn glossary_processor(
-    assets_path: impl AsRef<Path>,
-    translations_path: impl AsRef<Path>,
-) -> Result<()> {
+pub fn glossary_processor(project_name: &str, write_raw: bool) -> Result<()> {
+    let paths = ProjectPaths::new(project_name);
+
+    let translations_path = &paths.translations_folder;
     let last_chapter = find_last_chapter(&translations_path)?;
-    let last_chapter_path = translations_path
-        .as_ref()
-        .join(format!("{}.md", last_chapter));
+    let last_chapter_path = translations_path.join(format!("{}.md", last_chapter));
 
     if is_file_empty(last_chapter_path) {
         let con = Confirm::with_theme(&ColorfulTheme::default())
@@ -231,7 +233,7 @@ pub fn glossary_processor(
         }
     }
 
-    let glossary_processor = GlossaryProcessor::new(assets_path, translations_path, last_chapter)?;
+    let glossary_processor = GlossaryProcessor::new(paths, last_chapter, write_raw)?;
 
     glossary_processor.process_new_chapters()?;
 

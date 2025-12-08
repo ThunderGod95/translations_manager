@@ -1,17 +1,22 @@
 mod input;
 mod pandoc;
 
-use std::fs::{self, create_dir_all, remove_dir_all};
+use std::collections::{HashMap, HashSet};
+use std::fs::{self, create_dir_all};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
+use clap::ValueEnum;
 use console::style;
+use indicatif::{ProgressBar, ProgressStyle};
+use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use strum::{Display, VariantArray};
 use threadpool::ThreadPool;
 
-use crate::config::CONFIG;
+use crate::config::{CONFIG, ProjectPaths};
 
 use self::input::build_input;
 
@@ -51,75 +56,161 @@ impl VolumeInfo {
 
         Ok(data)
     }
+
+    pub fn only_required(from: &Vec<VolumeInfo>, required_volumes: &[usize]) -> Result<Vec<Self>> {
+        let volumes_to_process: Vec<_> = if required_volumes.is_empty() {
+            from.clone()
+        } else {
+            let available_positions: HashSet<usize> = from.iter().map(|v| v.position).collect();
+
+            let mut missing_volumes: Vec<usize> = required_volumes
+                .iter()
+                .filter(|&req| !available_positions.contains(req))
+                .copied()
+                .collect();
+
+            let available_positions: Vec<_> = available_positions.iter().sorted().collect();
+            missing_volumes.sort();
+
+            if !missing_volumes.is_empty() {
+                bail!(
+                    "The following requested volumes were not found in: {:?}.\nAvailable volumes are: {:?}",
+                    missing_volumes,
+                    available_positions
+                );
+            }
+
+            from.clone()
+                .into_iter()
+                .filter(|vol| required_volumes.contains(&vol.position))
+                .collect()
+        };
+
+        Ok(volumes_to_process)
+    }
 }
 
-#[derive(Debug, Clone, Copy, Display, PartialEq, Eq, VariantArray)]
+#[derive(
+    Debug, Hash, Clone, Copy, Display, PartialEq, Eq, PartialOrd, Ord, VariantArray, ValueEnum,
+)]
+/// Represents the supported file formats for content distribution.
 pub enum DistributionFormat {
+    /// Electronic Publication format (standard eBooks).
     EPUB,
+    /// Portable Document Format.
     PDF,
+    /// Plain text format.
     TXT,
 }
 
-pub fn distribute(
-    dist_format: DistributionFormat,
-    translations_dir: impl AsRef<Path>,
-    assets_dir: impl AsRef<Path>,
-    dist_dir: impl AsRef<Path>,
-) -> Result<()> {
-    let translations_dir = translations_dir.as_ref().to_path_buf();
-    let assets_dir = assets_dir.as_ref().to_path_buf();
-    let output_sub_dir = prepare_output_directory(&dist_dir, dist_format)?;
+/// Manages the concurrent processing and distribution of project files.
+pub struct Distributor {
+    vols_info: Vec<VolumeInfo>,
+    paths: ProjectPaths,
+    pool: ThreadPool,
+    results: Arc<Mutex<HashMap<DistributionFormat, Vec<Result<()>>>>>,
+    progress: ProgressBar,
+}
 
-    let volumes = VolumeInfo::load(assets_dir.join(&CONFIG.read().unwrap().sep_info_file))
-        .context("Failed to load volume configuration. Check your assets directory.")?;
+impl Distributor {
+    /// Creates a new `Distributor` instance.
+    ///
+    /// This initializes a thread pool with a size equal to the number of
+    /// available logical CPUs on the current machine.
+    ///
+    /// # Returns
+    ///
+    /// A new instance of `Distributor` ready to accept tasks.
+    pub fn new(project_name: &str) -> Result<Self> {
+        let paths = ProjectPaths::new(&project_name);
 
-    println!("Creating {}s... (Total: {})", dist_format, volumes.len());
+        let config = CONFIG.read().expect("Config lock poisoned");
+        let info_path = paths.assets_folder.join(&config.sep_info_file);
 
-    let pool = ThreadPool::new(num_cpus::get());
-    let results = Arc::new(Mutex::new(Vec::new()));
+        let pb = ProgressBar::new(0);
+        pb.set_style(
+            ProgressStyle::with_template(
+                "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg}",
+            )
+            .unwrap()
+            .progress_chars("#>-"),
+        );
+        pb.enable_steady_tick(Duration::from_millis(50));
 
-    for vol in volumes {
-        let results = Arc::clone(&results);
-        let translations_dir = translations_dir.clone();
-        let assets_dir = assets_dir.clone();
-        let output_sub_dir = output_sub_dir.clone();
-
-        pool.execute(move || {
-            let res = process_volume(
-                &vol,
-                dist_format,
-                &translations_dir,
-                &assets_dir,
-                &output_sub_dir,
-            );
-
-            results.lock().unwrap().push(res);
-        });
+        Ok(Self {
+            vols_info: VolumeInfo::load(info_path)?,
+            paths,
+            pool: ThreadPool::new(num_cpus::get()),
+            results: Arc::new(Mutex::new(HashMap::new())),
+            progress: pb,
+        })
     }
 
-    pool.join();
+    /// Queues a complete project for distribution in the specified format.
+    ///
+    /// This method submits the task to the internal thread pool for asynchronous processing.
+    ///
+    /// # Arguments
+    ///
+    /// * `dist_format` - The target [`DistributionFormat`] (e.g., PDF, EPUB).
+    /// * `project` - A string slice representing the project identifier or name.
+    /// * `volumes` - The volumes to process. If empty, all volumes are processed.
+    pub fn add(&self, dist_format: DistributionFormat, required_volumes: &[usize]) -> Result<()> {
+        let output_sub_dir = prepare_output_directory(&self.paths.dist_folder, dist_format)?;
 
-    let mutex = Arc::try_unwrap(results).expect(
-        "A critical internal error occurred while collecting thread results. \
-         This indicates a bug in the application. (ARC_UNWRAP_FAILED)",
-    );
+        let volumes = VolumeInfo::only_required(&self.vols_info, &required_volumes)?;
 
-    let results = match mutex.into_inner() {
-        Ok(results) => results,
-        Err(poison_error) => {
+        self.progress.inc_length(volumes.len() as u64);
+        self.progress.set_message(format!("Processing..."));
+
+        for vol in volumes {
+            let results = Arc::clone(&self.results);
+            let translations_dir = self.paths.translations_folder.clone();
+            let assets_dir = self.paths.assets_folder.clone();
+            let output_sub_dir = output_sub_dir.clone();
+            let pb = self.progress.clone();
+
+            self.pool.execute(move || {
+                let res = process_volume(
+                    &vol,
+                    dist_format,
+                    &translations_dir,
+                    &assets_dir,
+                    &output_sub_dir,
+                    &pb,
+                );
+
+                pb.inc(1);
+
+                let mut results_guard = results.lock().unwrap();
+                results_guard.entry(dist_format).or_default().push(res);
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Wait for all tasks to finish and returns errors if any.
+    ///
+    /// `wait` will return immediately if no tasks are being executed.
+    pub fn wait(&self) -> Result<()> {
+        self.pool.join();
+
+        self.progress.finish_with_message("All tasks completed.");
+
+        let mut results_guard = self.results.lock().unwrap_or_else(|e| {
             eprintln!(
                 "{}",
-                style(
-                    "[WARN] One or more processing threads crashed. \
-                     Results may be incomplete."
-                )
-                .yellow()
+                style("[WARN] One or more processing threads crashed. Results may be incomplete.")
+                    .yellow()
             );
-            poison_error.into_inner()
-        }
-    };
+            e.into_inner()
+        });
 
-    log_errors(dist_format, results)
+        let results = std::mem::take(&mut *results_guard);
+
+        log_errors(results)
+    }
 }
 
 fn process_volume(
@@ -128,8 +219,9 @@ fn process_volume(
     translations_dir: &Path,
     assets_dir: &Path,
     output_dir: &Path,
+    pb: &ProgressBar,
 ) -> Result<()> {
-    println!("Creating {} for {}", dist_format, &vol.title);
+    pb.set_message(format!("{} -> {}", dist_format, &vol.title));
 
     let output_file_name = sanitize_filename::sanitize(&vol.title);
     let output_file_path = output_dir.join(format!(
@@ -179,68 +271,66 @@ fn prepare_output_directory(
     let sub_dir_name = format!("{}s", format.to_string().to_lowercase());
     let output_sub_dir = dist_dir.as_ref().join(sub_dir_name);
 
-    if output_sub_dir.exists() {
-        remove_dir_all(&output_sub_dir).with_context(|| {
+    if !output_sub_dir.exists() {
+        create_dir_all(&output_sub_dir).with_context(|| {
             format!(
-                "Failed to clear the old output directory: '{}'.\n  \
-                 Check if any files inside are in use by another program.",
+                "Failed to create the output directory: '{}'.\n  \
+             Please check if you have write permissions for this location.",
                 output_sub_dir.display()
             )
         })?;
     }
 
-    create_dir_all(&output_sub_dir).with_context(|| {
-        format!(
-            "Failed to create the output directory: '{}'.\n  \
-             Please check if you have write permissions for this location.",
-            output_sub_dir.display()
-        )
-    })?;
-
     Ok(output_sub_dir)
 }
 
-fn log_errors(dist_format: DistributionFormat, results: Vec<Result<()>>) -> Result<()> {
-    let total = results.len();
-    let mut errors = Vec::with_capacity(results.len());
-    let mut successes = 0;
+fn log_errors(results_map: HashMap<DistributionFormat, Vec<Result<()>>>) -> Result<()> {
+    let mut final_result = Ok(());
 
-    for result in results {
-        match result {
-            Ok(_) => successes += 1,
-            Err(e) => errors.push(e),
+    for (dist_format, results) in results_map {
+        let total = results.len();
+        let mut errors = Vec::with_capacity(results.len());
+        let mut successes = 0;
+
+        for result in results {
+            match result {
+                Ok(_) => successes += 1,
+                Err(e) => errors.push(e),
+            }
         }
-    }
 
-    println!(
-        "{}",
-        style(format!(
-            "Successfully processed {}/{} {}s.",
-            successes, total, dist_format
-        ))
-        .green(),
-    );
-
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        eprintln!(
+        println!(
             "{}",
             style(format!(
-                "Failed to process {}/{} {}:",
-                errors.len(),
-                total,
-                dist_format
+                "Successfully processed {}/{} {}s.",
+                successes, total, dist_format
             ))
-            .red()
+            .green(),
         );
 
-        for (i, e) in errors.iter().enumerate() {
-            eprintln!("{}", style(format!("  Failure {}: {:#}", i + 1, e)).red())
-        }
+        if !errors.is_empty() {
+            eprintln!(
+                "{}",
+                style(format!(
+                    "Failed to process {}/{} {}:",
+                    errors.len(),
+                    total,
+                    dist_format
+                ))
+                .red()
+            );
 
-        Err(errors.remove(0))
+            for (i, e) in errors.iter().enumerate() {
+                eprintln!("{}", style(format!("  Failure {}: {:#}", i + 1, e)).red())
+            }
+
+            if final_result.is_ok() {
+                final_result = Err(errors.remove(0));
+            }
+        }
     }
+
+    final_result
 }
 
 fn distribute_as_txt(input: String, output_file: impl AsRef<Path>) -> Result<()> {

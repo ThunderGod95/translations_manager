@@ -77,6 +77,24 @@ pub struct AppConfig {
     pub sep_info_file: PathBuf,
 }
 
+#[derive(Debug)]
+pub struct ProjectPaths {
+    /// The directory where final, translated chapters are stored.
+    pub translations_folder: PathBuf,
+
+    /// The root directory for project assets.
+    ///
+    /// This folder serves as the base path for relative configuration files
+    /// such as the glossary, prompts, and separation info.
+    pub assets_folder: PathBuf,
+
+    /// The output directory where compiled books (EPUB/PDF) are generated.
+    pub dist_folder: PathBuf,
+
+    /// The directory containing the source raw (untranslated) chapters.
+    pub raws_folder: PathBuf,
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         let base_dirs = BaseDirs::new().unwrap();
@@ -97,6 +115,43 @@ impl Default for AppConfig {
             assets_folder: "assets".into(),
             dist_folder: "dist".into(),
             raws_folder: "raws".into(),
+        }
+    }
+}
+
+impl ProjectPaths {
+    pub fn new(project: &str) -> Self {
+        CONFIG.read().unwrap().get_paths_for_project(project)
+    }
+}
+
+impl AppConfig {
+    pub fn get_translations_dir(&self, project: &str) -> PathBuf {
+        self.base_projects_dir
+            .join(project)
+            .join(&self.translations_folder)
+    }
+
+    pub fn get_assets_dir(&self, project: &str) -> PathBuf {
+        self.base_projects_dir
+            .join(project)
+            .join(&self.assets_folder)
+    }
+
+    pub fn get_dist_dir(&self, project: &str) -> PathBuf {
+        self.base_projects_dir.join(project).join(&self.dist_folder)
+    }
+
+    pub fn get_raws_dir(&self, project: &str) -> PathBuf {
+        self.base_projects_dir.join(project).join(&self.raws_folder)
+    }
+
+    pub fn get_paths_for_project(&self, project: &str) -> ProjectPaths {
+        ProjectPaths {
+            translations_folder: self.get_translations_dir(&project),
+            assets_folder: self.get_assets_dir(&project),
+            dist_folder: self.get_dist_dir(&project),
+            raws_folder: self.get_raws_dir(&project),
         }
     }
 }

@@ -16,6 +16,7 @@ pub fn populate_arguments(command: &mut Command) -> Result<()> {
         Command::Replace(replace_args) => populate_replace_arguments(replace_args),
         Command::Init(init_args) => populate_init_arguments(init_args),
         Command::Next => Ok(()),
+        Command::Clean(_) => Ok(()),
     }
 }
 

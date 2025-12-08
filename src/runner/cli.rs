@@ -3,6 +3,8 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand};
 use strum::{Display, EnumString, VariantArray};
 
+use crate::distribute::DistributionFormat;
+
 #[derive(Parser, Debug, Clone)]
 #[command(
     version,
@@ -25,6 +27,15 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand, Clone, PartialEq, Eq)]
 pub enum Command {
+    /// Clean all chapters for known errors.
+    #[command(
+        name = "clean",
+        long_about = "Scans all translated chapters to detect and correct common formatting errors.
+    This process standardizes punctuation, fixes whitespace inconsistencies,
+    and removes known artifacts to ensure a clean text."
+    )]
+    Clean(CleanArgs),
+
     /// Compile translated chapters into distributable formats (EPUB, PDF)
     #[command(
         name = "distribute",
@@ -70,6 +81,15 @@ manual editing."
     )]
     Internal,
 
+    /// Runs the glossary command for the next untranslated chapter
+    #[command(
+        name = "next",
+        long_about = "Automatically identifies the next missing chapter in the translation sequence.
+        If the corresponding raw source file is found, it immediately triggers the
+        preparation workflow (glossary generation and context setup) for that chapter."
+    )]
+    Next,
+
     /// Open project files or chapters in the preferred editor.
     #[command(
         name = "open",
@@ -85,12 +105,6 @@ the entire project root directory in the preferred editor."
 with new text within a specified range of translated chapter files."
     )]
     Replace(ReplaceArgs),
-
-    #[command(
-        name = "next",
-        long_about = "Runs the glossary command for the next untranslated chapter."
-    )]
-    Next,
 }
 
 impl Command {
@@ -104,6 +118,7 @@ impl Command {
             Task::Init => Command::Init(InitArgs::default()),
             Task::Internal => Command::Internal,
             Task::Next => Command::Next,
+            Task::Clean => Command::Clean(CleanArgs::default()),
         }
     }
 }
@@ -147,9 +162,14 @@ pub struct ReplaceArgs {
 
 #[derive(Debug, Clone, Args, PartialEq, Eq, Default)]
 pub struct DistArgs {
-    /// Distribute as TXT. Specifying this option will disable generation of other formats.
-    #[arg(short, long, required = false)]
-    pub txt: bool,
+    /// Specify output formats. If left empty, all formats will be generated.
+    /// Example: --formats epub pdf
+    #[arg(short, long, value_enum)]
+    pub formats: Vec<DistributionFormat>,
+    /// Specify the volumes to process. If left empty, all volumes will be processed.
+    /// Example: --volumes 1 2
+    #[arg(short, long)]
+    pub volumes: Vec<usize>,
 }
 
 #[derive(Debug, Clone, Args, PartialEq, Eq, Default)]
@@ -162,9 +182,16 @@ pub struct InitArgs {
     pub project_name: Option<String>,
 }
 
+#[derive(Debug, Clone, Args, PartialEq, Eq, Default)]
+pub struct CleanArgs {
+    pub file: Option<usize>,
+}
+
 #[derive(Debug, Clone, Copy, VariantArray, EnumString, Display)]
 #[strum(serialize_all = "lowercase")]
 pub enum Task {
+    /// The clean task
+    Clean,
     /// The glossary generation task
     Glossary,
     /// The pattern finding task
@@ -175,7 +202,9 @@ pub enum Task {
     Distribute,
     /// The chapter opening task
     Open,
+    /// The next chapter glossary task
     Next,
+    /// Initializing new project task
     Init,
     /// Editing the config task
     Internal,

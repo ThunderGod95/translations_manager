@@ -11,21 +11,22 @@ use strum::VariantArray;
 use crate::config::{CONFIG, update_config};
 use crate::projects::*;
 use crate::runner::cli::Task;
-use crate::runner::tasks::run_next_task;
+use crate::runner::tasks::{run_clean_task, run_next_task};
 use crate::runner::*;
 use crate::util::{is_standalone, prompt_for_rerun};
 
-pub mod cache;
-pub mod config;
-pub mod distribute;
-pub mod editor;
-pub mod find;
-pub mod glossary;
-pub mod init;
-pub mod projects;
-pub mod replace;
-pub mod runner;
-pub mod util;
+mod cache;
+mod clean;
+mod config;
+mod distribute;
+mod editor;
+mod find;
+mod glossary;
+mod init;
+mod projects;
+mod replace;
+mod runner;
+mod util;
 
 fn run_app(cli: Cli) -> Result<()> {
     let base_path = if let Some(path) = cli.path {
@@ -105,19 +106,22 @@ fn handle_task(
     let project_path = base_path.as_ref().join(&project_name);
 
     match task {
-        Command::Glossary => run_glossary_task(&project_path)?,
+        Command::Glossary => run_glossary_task(&project_name)?,
         Command::Find(args) => {
             run_find_task(&args, &project_name, &project_path)?;
         }
         Command::Replace(args) => {
             run_replace_task(&args, &project_path)?;
         }
-        Command::Distribute(args) => run_dist_task(&args, &project_path)?,
+        Command::Distribute(args) => run_dist_task(&args, &project_name)?,
         Command::Open(args) => {
             run_open_task(&args, &project_path)?;
         }
         Command::Next => {
-            run_next_task(&project_path)?;
+            run_next_task(&project_name, &project_path)?;
+        }
+        Command::Clean(args) => {
+            run_clean_task(&args, &project_path)?;
         }
         Command::Internal | Command::Init(_) => {
             unreachable!("Pathless commands should have been handled by the guard match")

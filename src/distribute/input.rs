@@ -48,17 +48,12 @@ pub(super) fn build_input(
     let mut final_content = String::with_capacity(final_capacity);
     final_content.push_str(&cover_prefix);
 
-    let file_count = read_files(&file_paths, &mut final_content)?;
-
-    println!(
-        "Successfully read and validated {} chapter files ({}...{}) for Vol. {}",
-        file_count, vol_info.file_start, vol_info.file_end, &vol_info.position
-    );
+    read_files(&file_paths, &mut final_content)?;
 
     Ok(final_content)
 }
 
-fn read_files(file_paths: &Vec<PathBuf>, buffer: &mut String) -> Result<usize> {
+fn read_files(file_paths: &Vec<PathBuf>, buffer: &mut String) -> Result<()> {
     let mut indexed_results: Vec<(usize, String)> = file_paths
         .par_iter()
         .enumerate()
@@ -82,7 +77,7 @@ fn read_files(file_paths: &Vec<PathBuf>, buffer: &mut String) -> Result<usize> {
         buffer.push_str(content_slice);
     }
 
-    Ok(indexed_results.len())
+    Ok(())
 }
 
 fn build_cover_prefix(
