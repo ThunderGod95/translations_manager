@@ -1,5 +1,5 @@
 mod chapter;
-mod internal;
+pub mod util;
 
 use std::fs;
 use std::path::Path;
@@ -8,7 +8,7 @@ use anyhow::{Context, Result, bail};
 
 use crate::util::{backup, collect_numbered_file_paths};
 use chapter::*;
-use internal::*;
+use util::*;
 
 pub fn clean_project(project_path: &Path) -> Result<()> {
     let translations_path = get_translations_dir(project_path)?;

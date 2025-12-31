@@ -1,12 +1,19 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    sync::LazyLock,
 };
 
 use anyhow::{Context, Result, bail};
+use fancy_regex::Regex;
 
 use super::Chapter;
 use crate::config::CONFIG;
+
+static RE_NAV_LINKS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?s)\n*<!--\s*NAV START\s*-->.*?<!--\s*NAV END\s*-->\n*")
+        .expect("Invalid regex pattern for chapter parsing")
+});
 
 pub fn get_translations_dir(project: &Path) -> Result<PathBuf> {
     let config = CONFIG.read().unwrap();
@@ -40,4 +47,9 @@ pub fn write_clean_chapters(write_path: &Path, chapters: &[Chapter]) -> Result<(
     }
 
     Ok(())
+}
+
+/// This function accepts a buffer which contains chapter content and removes nav links from it.
+pub fn clean_nav_links(content: &str) -> String {
+    RE_NAV_LINKS.replace_all(content, "").trim().to_string()
 }

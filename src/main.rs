@@ -1,11 +1,13 @@
+#![allow(unused)]
+
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
 use console::style;
 use dialoguer::theme::ColorfulTheme;
 use dialoguer::{Input, Select};
 use std::path::Path;
-use std::process;
 use std::time::Instant;
+use std::{fs, process};
 use strum::VariantArray;
 
 use crate::config::{CONFIG, update_config};
