@@ -16,67 +16,80 @@ pub fn process_chapters<'a>(
     last_chapter_number: usize,
 ) -> Result<Vec<Chapter>> {
     if cr_ch_text.trim().is_empty() {
-        bail!("No chapters found. A chapter must start with '第...章'.")
+        bail!("Chapter file is empty.")
     }
 
     let chunks: Vec<_> = RE_SPLITTER.split(cr_ch_text.trim()).skip(1).collect();
 
     if chunks.is_empty() {
-        println!("No chapters found. A chapter must start with '第...章'.");
-
-        let confirm = Confirm::with_theme(&ColorfulTheme::default())
-            .with_prompt("Do you still want to continue?")
-            .default(false)
-            .show_default(true)
-            .interact()?;
-
-        if !confirm {
-            bail!("Task cancelled.")
-        }
-
-        return Ok(vec![Chapter {
-            expected_number: 0,
-            expected_title: "".to_string(),
-            text: cr_ch_text.to_string(),
-            create_file: false,
-        }]);
+        return process_no_chapter(cr_ch_text);
     }
 
-    println!("Found {} potential chapter(s).", chunks.len());
+    println!("Found {} potential chapter segment(s).", chunks.len());
 
     let mut expected_number = last_chapter_number + 1;
     let mut processed_chapters: Vec<Chapter> = Vec::with_capacity(chunks.len());
 
     for chunk in chunks.into_iter() {
         let chunk = chunk?;
-        let Some(cap) = RE_PARSER.captures(chunk)? else {
-            println!(
-                "{}",
-                style(format!("[WARN] Failed to parse chapter chunk. Skipping...")).yellow()
-            );
-            continue;
-        };
 
-        let title_text = cap.get(1).map_or("", |m| m.as_str().trim());
-        let original_content = cap.get(2).map_or("", |m| m.as_str());
+        if let Some(cap) = RE_PARSER.captures(chunk)? {
+            let title_text = cap.get(1).map_or("", |m| m.as_str().trim());
+            let original_content = cap.get(2).map_or("", |m| m.as_str());
 
-        let expected_title = format!("第{}章 {}", expected_number, title_text)
-            .trim_end()
-            .to_string();
+            let expected_title = format!("第{}章 {}", expected_number, title_text)
+                .trim_end()
+                .to_string();
 
-        let chapter_text = format!("{}\n{}", expected_title, original_content);
+            let chapter_text = format!("{}{}", expected_title, original_content);
 
-        processed_chapters.push(Chapter {
-            expected_number,
-            expected_title,
-            text: chapter_text,
-            create_file: true,
-        });
+            processed_chapters.push(Chapter {
+                expected_number,
+                expected_title,
+                text: chapter_text,
+                create_file: true,
+            });
 
-        expected_number += 1;
+            expected_number += 1;
+        } else {
+            if let Some(last_chapter) = processed_chapters.last_mut() {
+                println!(
+                    "{}",
+                    style(format!(
+                        "[WARN] Found line starting with '第' that is not a valid chapter heading.\n\tAppending text to previous chapter: '第{}...'",
+                        chunk.chars().take(10).collect::<String>()
+                    )).yellow()
+                );
+
+                last_chapter.text.push_str(&format!("\n第{}", chunk));
+            } else {
+                return process_no_chapter(cr_ch_text);
+            }
+        }
     }
 
     Ok(processed_chapters)
+}
+
+fn process_no_chapter(text: &str) -> Result<Vec<Chapter>> {
+    println!("No chapters found. A chapter must start with '第...章'.");
+
+    let confirm = Confirm::with_theme(&ColorfulTheme::default())
+        .with_prompt("Do you still want to continue?")
+        .default(false)
+        .show_default(true)
+        .interact()?;
+
+    if !confirm {
+        bail!("Task cancelled.")
+    }
+
+    return Ok(vec![Chapter {
+        expected_number: 0,
+        expected_title: "".to_string(),
+        text: text.to_string(),
+        create_file: false,
+    }]);
 }
 
 pub fn find_last_chapter(translations_path: impl AsRef<Path>) -> Result<usize> {
