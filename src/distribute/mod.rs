@@ -101,6 +101,8 @@ pub enum DistributionFormat {
     PDF,
     /// Plain text format.
     TXT,
+    /// MS Word format.
+    DOCX,
 }
 
 /// Manages the concurrent processing and distribution of project files.

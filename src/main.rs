@@ -1,13 +1,11 @@
-#![allow(unused)]
-
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
 use console::style;
 use dialoguer::theme::ColorfulTheme;
 use dialoguer::{Input, Select};
 use std::path::Path;
+use std::process;
 use std::time::Instant;
-use std::{fs, process};
 use strum::VariantArray;
 
 use crate::config::{CONFIG, update_config};
@@ -123,8 +121,9 @@ fn handle_task(
             run_next_task(&project_name, &project_path)?;
         }
         Command::Clean(args) => {
-            run_clean_task(&args, &project_path)?;
+            run_clean_task(&args, &project_name)?;
         }
+        Command::Nav(_args) => {}
         Command::Internal | Command::Init(_) => {
             unreachable!("Pathless commands should have been handled by the guard match")
         }

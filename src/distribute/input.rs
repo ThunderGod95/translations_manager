@@ -76,7 +76,7 @@ fn read_files(file_paths: &Vec<PathBuf>, buffer: &mut String) -> Result<()> {
         // Strip BOM if present
         let content_slice = content_str.strip_prefix('\u{FEFF}').unwrap_or(content_str);
         // Strip navigation links if present
-        let content_slice = clean::util::clean_nav_links(&content_slice);
+        let content_slice = clean::write::sanitize_chapter(&content_slice);
         buffer.push_str(&content_slice);
     }
 

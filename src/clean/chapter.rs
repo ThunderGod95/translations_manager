@@ -1,43 +1,27 @@
 use fancy_regex::Regex;
 use std::sync::LazyLock;
 
-/// Represents a chapter parsed from markdown text.
-///
-/// # Expected Format
-/// Chapters should be formatted as:
-/// ```markdown
-/// # Chapter 1: Introduction
-/// Content goes here...
-///
-/// # Chapter 2: Next Section
-/// More content...
-/// ```
-#[derive(Debug, Clone, PartialEq)]
-pub struct Chapter {
-    /// The chapter number as a string slice
-    pub number: String,
-    /// The chapter title
-    pub title: String,
-    /// The chapter content (everything after the heading until the next chapter)
-    pub content: String,
-}
-
-impl Chapter {
-    /// Returns the chapter number as a parsed integer, if valid.
-    pub fn number_as_usize(&self) -> Option<usize> {
-        self.number.parse().ok()
-    }
-}
-
 static RE_HEADER: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?m)^#+\s*Chapter\s*(\d+)\s*:?\s*(.+?)\s*$")
         .expect("Invalid regex pattern for chapter parsing")
 });
 
+/// Represents a chapter parsed from markdown text.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Chapter {
+    pub number: String,
+    pub title: String,
+    pub content: String,
+}
+
+impl Chapter {
+    /// Returns the chapter number as a parsed integer, if valid.
+    pub fn number_as_u32(&self) -> Option<u32> {
+        self.number.parse().ok()
+    }
+}
+
 /// Parses chapters from markdown text.
-///
-/// Looks for headings in the format: `# Chapter N: Title` or `## Chapter N Title`
-/// where N is a number. Captures all content until the next chapter heading.
 pub fn parse_chapters(txt: &str) -> Vec<Chapter> {
     let mut matches = RE_HEADER.captures_iter(txt).peekable();
     let mut chapters = Vec::new();

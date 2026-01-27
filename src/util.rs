@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     ffi::OsStr,
     fs,
     path::{Path, PathBuf},
@@ -143,6 +144,14 @@ pub fn get_current_date() -> Result<String> {
         .context("Failed to get current date.")
 }
 
+pub fn get_current_date_time() -> Result<String> {
+    let format = format_description!("[year]_[month]_[day]-[hour]_[minute]");
+    let now_utc = OffsetDateTime::now_utc();
+    now_utc
+        .format(&format)
+        .context("Failed to format current date and time.")
+}
+
 pub fn collect_numbered_file_paths(
     input_dir: &Path,
     format: Option<&str>,
@@ -199,9 +208,13 @@ pub fn collect_numbered_file_paths(
         let expected_count = e.saturating_sub(s).saturating_add(1);
 
         if entries.len() != expected_count {
+            let found_nums: HashSet<_> = entries.iter().map(|(num, _, _)| *num).collect();
+            let missing_files: Vec<_> = (s..=e).filter(|n| !found_nums.contains(n)).collect();
+
             bail!(
-                "Validation failed: Expected {expected_count} files in range {s}-{e}, but only found {}. Check for missing files.",
-                entries.len()
+                "Validation failed: Expected {expected_count} files in range {s}-{e}, but only found {}.\n\tMissing file numbers: {:?}",
+                entries.len(),
+                missing_files
             );
         }
     }
@@ -228,72 +241,89 @@ pub fn backup(og_path: &Path) -> Result<()> {
 }
 
 mod backup {
-    use std::fs;
     use std::path::Path;
+    use std::{fs, path::PathBuf};
 
     use anyhow::{Context, Result, anyhow};
+    use rayon::iter::{ParallelBridge, ParallelIterator};
 
-    pub fn backup_folder(og_path: &Path) -> Result<()> {
-        let backup_path = og_path.join(".backup");
+    use crate::util::get_current_date_time;
 
-        create_backup_directory(&backup_path)?;
-        copy_folder_to_backup(og_path, &backup_path)?;
+    pub(super) fn backup_folder(source_path: &Path) -> Result<()> {
+        let backup_root = resolve_backup_root(source_path)?;
 
-        Ok(())
-    }
-
-    pub fn backup_file(file_path: &Path) -> Result<()> {
-        let parent = file_path.parent();
-        let base = parent.unwrap_or(Path::new(""));
-        let backup_path = base.join(".backup");
-
-        create_backup_directory(&backup_path)?;
-        copy_file_to_backup(&file_path, &backup_path)?;
+        create_dir_all_verbose(&backup_root)?;
+        copy_recursive(source_path, &backup_root)?;
 
         Ok(())
     }
 
-    fn create_backup_directory(backup_path: &Path) -> Result<()> {
-        fs::create_dir_all(backup_path).with_context(|| {
-            format!(
-                "Failed to create backup directory: {}",
-                backup_path.display()
-            )
-        })?;
+    pub(super) fn backup_file(file_path: &Path) -> Result<()> {
+        let parent = file_path.parent().unwrap_or_else(|| Path::new("."));
+        let backup_root = resolve_backup_root(parent)?;
 
-        println!("Created backup directory: {}\n", backup_path.display());
-        Ok(())
-    }
-
-    fn copy_folder_to_backup(source_path: &Path, backup_path: &Path) -> Result<()> {
-        for entry in fs::read_dir(source_path)? {
-            let source_file = entry?.path();
-
-            if source_file == backup_path {
-                continue;
-            }
-
-            copy_file_to_backup(&source_file, &backup_path)?;
-        }
+        create_dir_all_verbose(&backup_root)?;
+        copy_file(file_path, &backup_root)?;
 
         Ok(())
     }
 
-    fn copy_file_to_backup(source_file: &Path, backup_path: &Path) -> Result<()> {
-        let file_name = source_file
+    fn copy_recursive(source: &Path, dest: &Path) -> Result<()> {
+        fs::read_dir(source)?
+            .par_bridge()
+            .try_for_each(|entry| -> Result<()> {
+                let entry = entry?;
+                let file_name = entry.file_name();
+
+                if file_name == ".backup" {
+                    return Ok(());
+                }
+
+                let source_path = entry.path();
+                let dest_path = dest.join(&file_name);
+                let file_type = entry.file_type()?;
+
+                if file_type.is_dir() {
+                    if let Err(e) = fs::create_dir(&dest_path) {
+                        if e.kind() != std::io::ErrorKind::AlreadyExists {
+                            return Err(e).context(format!(
+                                "Failed to create subdir: {}",
+                                dest_path.display()
+                            ));
+                        }
+                    }
+                    copy_recursive(&source_path, &dest_path)?;
+                } else {
+                    copy_file_explicit(&source_path, &dest_path)?;
+                }
+
+                Ok(())
+            })
+    }
+
+    fn resolve_backup_root(base: &Path) -> Result<PathBuf> {
+        Ok(base.join(".backup").join(get_current_date_time()?))
+    }
+
+    fn create_dir_all_verbose(path: &Path) -> Result<()> {
+        fs::create_dir_all(path)
+            .with_context(|| format!("Failed to create backup root: {}", path.display()))
+    }
+
+    fn copy_file(source: &Path, dest_root: &Path) -> Result<()> {
+        let file_name = source
             .file_name()
-            .ok_or_else(|| anyhow!("Invalid file name in path: {}", source_file.display()))?;
+            .ok_or_else(|| anyhow!("Invalid file name: {}", source.display()))?;
 
-        let backup_file = backup_path.join(file_name);
+        let dest_path = dest_root.join(file_name);
+        copy_file_explicit(source, &dest_path)
+    }
 
-        fs::copy(&source_file, &backup_file).with_context(|| {
-            format!(
-                "Failed to backup {} to {}",
-                source_file.display(),
-                backup_file.display()
-            )
+    /// Performs the actual copy to a specific full path
+    fn copy_file_explicit(source: &Path, dest: &Path) -> Result<()> {
+        fs::copy(source, dest).with_context(|| {
+            format!("Failed to copy {} to {}", source.display(), dest.display())
         })?;
-
         Ok(())
     }
 }

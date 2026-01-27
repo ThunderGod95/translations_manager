@@ -229,10 +229,10 @@ pub fn run_next_task(project_name: &str, project_path: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn run_clean_task(args: &CleanArgs, project_path: &Path) -> Result<()> {
+pub fn run_clean_task(args: &CleanArgs, project: &String) -> Result<()> {
     if let Some(file) = args.file {
-        clean::clean_chapter(&project_path, file)
+        clean::clean_file(&project, file, args.yaml)
     } else {
-        clean::clean_project(&project_path)
+        clean::clean_project(&project, args.yaml)
     }
 }

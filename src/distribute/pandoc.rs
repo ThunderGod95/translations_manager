@@ -46,6 +46,12 @@ impl PandocArgs {
         self
     }
 
+    pub fn set_reference_doc(&mut self, doc: impl AsRef<Path>) -> &mut Self {
+        self.0
+            .push(format!("--reference-doc={}", doc.as_ref().display()));
+        self
+    }
+
     pub fn get(&self) -> &Vec<String> {
         &self.0
     }
@@ -178,6 +184,9 @@ pub(super) fn build_args(
         DistributionFormat::EPUB => {
             apply_epub_args(&mut pandoc_args, metadata, assets_dir)?;
         }
+        DistributionFormat::DOCX => {
+            apply_docx_args(&mut pandoc_args, assets_dir)?;
+        }
         _ => {}
     }
 
@@ -253,6 +262,22 @@ fn apply_epub_args(
 
     if let Some(cover_image) = metadata.get_cover_image() {
         pandoc_args.push_arg(format!("--epub-cover-image={}", cover_image));
+    }
+
+    Ok(())
+}
+
+fn apply_docx_args(pandoc_args: &mut PandocArgs, assets_dir: &Path) -> Result<()> {
+    let reference_doc_path = assets_dir.join("dist").join("reference.docx");
+
+    if fs::metadata(&reference_doc_path).is_ok() {
+        println!("Found DOCX reference document. Applying it...");
+        pandoc_args.set_reference_doc(reference_doc_path);
+    } else {
+        println!(
+            "{}",
+            style("[WARN] Reference DOCX not found. Using Pandoc defaults.").yellow()
+        );
     }
 
     Ok(())

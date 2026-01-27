@@ -6,10 +6,9 @@ use dialoguer::{Confirm, theme::ColorfulTheme};
 use fancy_regex::Regex;
 
 use super::Chapter;
-
 static RE_SPLITTER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^第").unwrap());
 static RE_PARSER: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?s)^.+?章([^\n\r]*)(.*)").unwrap());
+    LazyLock::new(|| Regex::new(r"^[^\n\r]+?章([^\n\r]*)(?s)(.*)").unwrap());
 
 pub fn process_chapters<'a>(
     cr_ch_text: &'a str,

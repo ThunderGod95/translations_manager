@@ -81,6 +81,12 @@ manual editing."
     )]
     Internal,
 
+    #[command(
+        name = "nav",
+        long_about = "Add navigation links to the specificed chapter."
+    )]
+    Nav(NavArgs),
+
     /// Runs the glossary command for the next untranslated chapter
     #[command(
         name = "next",
@@ -119,6 +125,7 @@ impl Command {
             Task::Internal => Command::Internal,
             Task::Next => Command::Next,
             Task::Clean => Command::Clean(CleanArgs::default()),
+            Task::Nav => Command::Nav(NavArgs::default()),
         }
     }
 }
@@ -185,6 +192,14 @@ pub struct InitArgs {
 #[derive(Debug, Clone, Args, PartialEq, Eq, Default)]
 pub struct CleanArgs {
     pub file: Option<usize>,
+    /// Add YAML Front Matter instead of navigation links.
+    #[arg(required = false, short, long, action = clap::ArgAction::SetTrue)]
+    pub yaml: bool,
+}
+
+#[derive(Debug, Clone, Args, PartialEq, Eq, Default)]
+pub struct NavArgs {
+    pub chapter: u32,
 }
 
 #[derive(Debug, Clone, Copy, VariantArray, EnumString, Display)]
@@ -202,6 +217,8 @@ pub enum Task {
     Distribute,
     /// The chapter opening task
     Open,
+    /// The navigation links task
+    Nav,
     /// The next chapter glossary task
     Next,
     /// Initializing new project task

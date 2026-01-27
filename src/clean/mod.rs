@@ -1,17 +1,21 @@
 mod chapter;
-pub mod util;
+pub mod navigation;
+pub mod write;
 
 use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 
-use crate::util::{backup, collect_numbered_file_paths};
+use crate::{
+    config::CONFIG,
+    util::{backup, collect_numbered_file_paths},
+};
 use chapter::*;
-use util::*;
+use write::*;
 
-pub fn clean_project(project_path: &Path) -> Result<()> {
-    let translations_path = get_translations_dir(project_path)?;
+pub fn clean_project(project: &str, yaml: bool) -> Result<()> {
+    let translations_path = &CONFIG.read().unwrap().get_translations_dir(project);
     let (paths, _) = collect_numbered_file_paths(&translations_path, Some("md"), None, None)?;
 
     println!(
@@ -30,7 +34,7 @@ pub fn clean_project(project_path: &Path) -> Result<()> {
     }
 
     all_chapters.retain(|c| {
-        let is_valid = c.number_as_usize().is_some();
+        let is_valid = c.number_as_u32().is_some();
         if !is_valid {
             eprintln!(
                 "[WARN]: Skipping chapter with invalid number '{}'",
@@ -52,15 +56,15 @@ pub fn clean_project(project_path: &Path) -> Result<()> {
 
     println!("Deleted {} original file(s)\n", paths.len());
 
-    write_clean_chapters(&translations_path, &all_chapters)?;
+    write_clean_chapters(&translations_path, &all_chapters, yaml)?;
 
     println!("\nSuccessfully cleaned {} chapter(s).", all_chapters.len());
 
     Ok(())
 }
 
-pub fn clean_chapter(project_path: &Path, file: usize) -> Result<()> {
-    let translations_path = get_translations_dir(project_path)?;
+pub fn clean_file(project: &str, file: usize, yaml: bool) -> Result<()> {
+    let translations_path = &CONFIG.read().unwrap().get_translations_dir(project);
     let chapter_path = translations_path.join(format!("{}.md", file));
 
     if !chapter_path.exists() {
@@ -87,7 +91,7 @@ pub fn clean_chapter(project_path: &Path, file: usize) -> Result<()> {
 
     let write_path = chapter_path.parent().unwrap_or(Path::new(""));
 
-    write_clean_chapters(write_path, &chapters)?;
+    write_clean_chapters(write_path, &chapters, yaml)?;
 
     Ok(())
 }
