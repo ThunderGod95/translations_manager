@@ -40,6 +40,7 @@ pub fn write_clean_chapters(write_path: &Path, chapters: &[Chapter], yaml: bool)
                 yaml::add_front_matter(
                     &raw_content,
                     &chapter.title,
+                    &chapter.number,
                     prev_chap,
                     next_chap,
                     max_digits,

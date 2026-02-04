@@ -106,6 +106,7 @@ pub mod yaml {
     pub fn add_front_matter(
         content: &str,
         title: &str,
+        num: &str,
         prev_chap: Option<u32>,
         next_chap: Option<u32>,
         padding: usize,
@@ -125,8 +126,8 @@ pub mod yaml {
         let escaped_title = title.replace("\"", "\\\"");
 
         let front_matter = format!(
-            "---\ntitle: \"{}\"\n{}{}---\n",
-            escaped_title, prev_entry, next_entry
+            "---\ntitle: \"{}\"\nid: \"{}\"\n{}{}---\n",
+            escaped_title, num, prev_entry, next_entry
         );
 
         format!("{}{}", front_matter, clean_content)
