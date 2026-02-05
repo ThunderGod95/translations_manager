@@ -130,6 +130,6 @@ pub mod yaml {
             escaped_title, num, prev_entry, next_entry
         );
 
-        format!("{}{}", front_matter, clean_content)
+        format!("{}\n{}", front_matter, clean_content)
     }
 }
