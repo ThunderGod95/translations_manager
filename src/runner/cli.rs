@@ -195,6 +195,9 @@ pub struct CleanArgs {
     /// Add YAML Front Matter instead of navigation links.
     #[arg(required = false, short, long, action = clap::ArgAction::SetTrue)]
     pub yaml: bool,
+    /// If specified, filenames will not be padded with 0s
+    #[arg(required = false, short, long, action = clap::ArgAction::SetFalse)]
+    pub pad: bool,
 }
 
 #[derive(Debug, Clone, Args, PartialEq, Eq, Default)]

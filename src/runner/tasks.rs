@@ -230,9 +230,9 @@ pub fn run_next_task(project_name: &str, project_path: &Path) -> Result<()> {
 }
 
 pub fn run_clean_task(args: &CleanArgs, project: &String) -> Result<()> {
-    if let Some(file) = args.file {
-        clean::clean_file(&project, file, args.yaml)
+    if let Some(_) = args.file {
+        bail!("Single file cleaning is not implemented yet.")
     } else {
-        clean::clean_project(&project, args.yaml)
+        clean::clean_project(&project, args.yaml, args.pad)
     }
 }
