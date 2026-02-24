@@ -4,10 +4,7 @@ use anyhow::Result;
 use dialoguer::{Confirm, History, Input, theme::ColorfulTheme};
 
 use super::cli::{Command, FindArgs, InitArgs, ReplaceArgs};
-use crate::{
-    runner::interactive::histories::FindHistory,
-    util::get_find_history_config_path,
-};
+use crate::{runner::interactive::histories::FindHistory, util::get_find_history_config_path};
 
 pub fn populate_arguments(command: &mut Command) -> Result<()> {
     match command {
@@ -21,6 +18,7 @@ pub fn populate_arguments(command: &mut Command) -> Result<()> {
         Command::Next => Ok(()),
         Command::Clean(_) => Ok(()),
         Command::Nav(_) => Ok(()),
+        Command::Print => Ok(()),
     }
 }
 

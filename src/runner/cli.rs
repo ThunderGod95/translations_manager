@@ -104,6 +104,9 @@ the entire project root directory in the preferred editor."
     )]
     Open(OpenArgs),
 
+    #[command(name = "print", long_about = "")]
+    Print,
+
     /// Find and replace text or regex patterns in translated chapters
     #[command(
         name = "replace",
@@ -126,6 +129,7 @@ impl Command {
             Task::Next => Command::Next,
             Task::Clean => Command::Clean(CleanArgs::default()),
             Task::Nav => Command::Nav(NavArgs::default()),
+            Task::Print => Command::Print,
         }
     }
 }
@@ -228,4 +232,6 @@ pub enum Task {
     Init,
     /// Editing the config task
     Internal,
+    /// Print base projects path and all known projects to console.
+    Print,
 }

@@ -11,7 +11,7 @@ use strum::VariantArray;
 use crate::config::{CONFIG, update_config};
 use crate::projects::*;
 use crate::runner::cli::Task;
-use crate::runner::tasks::{run_clean_task, run_next_task};
+use crate::runner::tasks::{run_clean_task, run_next_task, run_print_task};
 use crate::runner::*;
 use crate::util::{is_standalone, prompt_for_rerun};
 
@@ -94,6 +94,9 @@ fn handle_task(
             println!("\nTask finished in: {:.2}s\n", time.elapsed().as_secs_f32());
             return run_init_task(&args, base_path.as_ref());
         }
+        Command::Print => {
+            return run_print_task();
+        }
         _ => {}
     }
 
@@ -124,7 +127,7 @@ fn handle_task(
             run_clean_task(&args, &project_name)?;
         }
         Command::Nav(_args) => {}
-        Command::Internal | Command::Init(_) => {
+        Command::Internal | Command::Init(_) | Command::Print => {
             unreachable!("Pathless commands should have been handled by the guard match")
         }
     }

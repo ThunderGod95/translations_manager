@@ -17,6 +17,7 @@ use crate::{
     find::*,
     glossary::{find_last_chapter, glossary_processor},
     init::*,
+    projects::get_projects,
     replace::replace_in_folder,
     runner::cli::DistArgs,
     util::{get_cache_path, get_config_file_path},
@@ -235,4 +236,19 @@ pub fn run_clean_task(args: &CleanArgs, project: &String) -> Result<()> {
     } else {
         clean::clean_project(&project, args.yaml, args.pad)
     }
+}
+
+pub fn run_print_task() -> Result<()> {
+    let base_dir = &CONFIG.read().unwrap().base_projects_dir;
+    let projects = get_projects(&base_dir)?;
+
+    println!("BASE PROJECTS DIR: {}", base_dir.display());
+
+    println!("PROJECTS:");
+
+    for project in projects {
+        println!("{project}")
+    }
+
+    Ok(())
 }
