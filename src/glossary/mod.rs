@@ -36,6 +36,7 @@ pub struct GlossaryEntry {
     pub _type: String,
     pub gender: Option<String>,
     pub file: Option<i32>,
+    pub summary: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -82,7 +83,6 @@ impl GlossaryProcessor {
     fn process_new_chapters(&self) -> Result<()> {
         let config = &CONFIG.read().unwrap();
 
-        // 1. Read and process chapter text
         let chapter_file_path = self.paths.assets_folder.join(&config.chapter_file);
         let chapter_file =
             read_to_string(chapter_file_path).context("Failed to read chapter file.")?;
@@ -96,7 +96,6 @@ impl GlossaryProcessor {
         let combined_chapter_text = chapters.iter().map(|c| &c.text).join("\n\n--\n\n");
         let processed_chapter_text = preprocess_chinese_text(&combined_chapter_text);
 
-        // 2. Run searches to find all unique terms
         let all_found_terms =
             self.find_all_glossary_terms(&processed_chapter_text, config.fuzzy_search_threshold);
 
@@ -105,22 +104,23 @@ impl GlossaryProcessor {
             all_found_terms.len()
         );
 
-        // 3. Build the micro-glossary
         let (found_entries, micro_glossary_string) = self.build_micro_glossary(&all_found_terms);
 
         println!("\n\n--- Final Micro-Glossary Terms ---\n");
 
         for entry in &found_entries {
-            println!("* {} - {}", entry.cn, entry.en);
+            if let Some(summary) = &entry.summary {
+                println!("* {} - {} ({})", entry.cn, entry.en, summary);
+            } else {
+                println!("* {} - {}", entry.cn, entry.en);
+            }
         }
 
-        // 4. Build and paste the final prompt
         let final_prompt_string =
             self.build_final_prompt(&micro_glossary_string, &combined_chapter_text)?;
 
         paste_glossary(&final_prompt_string)?;
 
-        // 5. Create raws and translations file.
         if self.write_raw {
             write_raws(&self.paths.raws_folder, &chapters);
         }

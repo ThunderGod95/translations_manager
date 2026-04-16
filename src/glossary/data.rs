@@ -50,7 +50,13 @@ pub fn create_micro_glossary(found_entries: &Vec<&GlossaryEntry>) -> String {
 
             let details_string = format!("[{}]", details.iter().join(", "));
 
-            format!("* {} ({}) -> {} {}", cn, pinyin, en, details_string)
+            let mut line = format!("* {} ({}) -> {} {}", cn, pinyin, en, details_string);
+
+            if let Some(summary) = &entry.summary {
+                line.push_str(&format!(" - {}", summary));
+            }
+
+            line
         })
         .join("\n")
 }
