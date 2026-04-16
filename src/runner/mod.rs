@@ -8,6 +8,6 @@ pub mod tasks;
 pub use cli::{Cli, Command};
 pub use interactive::populate_arguments;
 pub use tasks::{
-    run_dist_task, run_find_task, run_glossary_task, run_init_task, run_internal_task,
-    run_open_task, run_replace_task,
+    run_dist_task, run_glossary_task, run_init_task, run_internal_task,
+    run_open_task
 };

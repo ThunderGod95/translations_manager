@@ -42,21 +42,6 @@ pub fn get_cache_path() -> Result<PathBuf> {
     Ok(path.join(&CONFIG.read().unwrap().cache_file))
 }
 
-pub fn get_find_history_config_path() -> Result<PathBuf> {
-    let project_dirs = ProjectDirs::from(
-        PROJECT_PATH_QUALIFIERS[0],
-        PROJECT_PATH_QUALIFIERS[1],
-        PROJECT_PATH_QUALIFIERS[2],
-    )
-    .ok_or_else(|| anyhow::anyhow!("Could not determine project directories"))?;
-
-    let path = project_dirs.cache_dir();
-
-    fs::create_dir_all(path)?;
-
-    Ok(path.join(&CONFIG.read().unwrap().find_history_config_file))
-}
-
 pub fn normalize_path(path: impl AsRef<str>) -> String {
     path.as_ref().replace("\\", "/")
 }
@@ -187,7 +172,7 @@ pub fn collect_numbered_file_paths(
             }
 
             match entry.metadata() {
-                Ok(md) => Some(Ok((file_num, path.to_path_buf(), md.len()))), // .to_path_buf() to own path
+                Ok(md) => Some(Ok((file_num, path.to_path_buf(), md.len()))),
                 Err(e) => Some(Err(anyhow!(
                     "Failed to get metadata for {}: {}",
                     path.display(),

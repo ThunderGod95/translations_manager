@@ -11,7 +11,7 @@ use strum::VariantArray;
 use crate::config::{CONFIG, update_config};
 use crate::projects::*;
 use crate::runner::cli::Task;
-use crate::runner::tasks::{run_clean_task, run_next_task, run_print_task};
+use crate::runner::tasks::{run_clean_task, run_next_task};
 use crate::runner::*;
 use crate::util::{is_standalone, prompt_for_rerun};
 
@@ -20,11 +20,9 @@ mod clean;
 mod config;
 mod distribute;
 mod editor;
-mod find;
 mod glossary;
 mod init;
 mod projects;
-mod replace;
 mod runner;
 mod util;
 
@@ -94,9 +92,6 @@ fn handle_task(
             println!("\nTask finished in: {:.2}s\n", time.elapsed().as_secs_f32());
             return run_init_task(&args, base_path.as_ref());
         }
-        Command::Print => {
-            return run_print_task();
-        }
         _ => {}
     }
 
@@ -110,12 +105,6 @@ fn handle_task(
 
     match task {
         Command::Glossary => run_glossary_task(&project_name)?,
-        Command::Find(args) => {
-            run_find_task(&args, &project_name, &project_path)?;
-        }
-        Command::Replace(args) => {
-            run_replace_task(&args, &project_path)?;
-        }
         Command::Distribute(args) => run_dist_task(&args, &project_name)?,
         Command::Open(args) => {
             run_open_task(&args, &project_path)?;
@@ -126,8 +115,7 @@ fn handle_task(
         Command::Clean(args) => {
             run_clean_task(&args, &project_name)?;
         }
-        Command::Nav(_args) => {}
-        Command::Internal | Command::Init(_) | Command::Print => {
+        Command::Internal | Command::Init(_) => {
             unreachable!("Pathless commands should have been handled by the guard match")
         }
     }

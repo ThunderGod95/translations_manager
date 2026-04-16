@@ -43,9 +43,6 @@ pub struct AppConfig {
     /// The path to the main application cache file.
     pub cache_file: PathBuf,
 
-    /// The path to the cache file specifically used for persisting "find" task history.
-    pub find_history_config_file: PathBuf,
-
     /// The sensitivity threshold for fuzzy search operations in the glossary.
     ///
     /// A higher value typically implies a laxer match requirement.
@@ -109,7 +106,6 @@ impl Default for AppConfig {
             translation_prompt_file: "translation_prompt.md".into(),
             sep_info_file: "sep.json".into(),
             cache_file: ".runner-cache.json".into(),
-            find_history_config_file: ".find_history.txt".into(),
             fuzzy_search_threshold: 2,
             translations_folder: "translations".into(),
             assets_folder: "assets".into(),

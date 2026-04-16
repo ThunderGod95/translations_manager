@@ -45,15 +45,6 @@ separation defined in the 'sep.json' configuration file."
     )]
     Distribute(DistArgs),
 
-    /// Search translated chapters for text or regex patterns
-    #[command(
-        name = "find",
-        long_about = "Searches for a text or regex pattern within a specified range of
-translated chapter files. Reports the first occurrence and a total
-count of all matches."
-    )]
-    Find(FindArgs),
-
     /// Prepare an untranslated chapter for translation
     #[command(
         name = "glossary",
@@ -81,12 +72,6 @@ manual editing."
     )]
     Internal,
 
-    #[command(
-        name = "nav",
-        long_about = "Add navigation links to the specificed chapter."
-    )]
-    Nav(NavArgs),
-
     /// Runs the glossary command for the next untranslated chapter
     #[command(
         name = "next",
@@ -103,72 +88,20 @@ manual editing."
 the entire project root directory in the preferred editor."
     )]
     Open(OpenArgs),
-
-    #[command(name = "print", long_about = "")]
-    Print,
-
-    /// Find and replace text or regex patterns in translated chapters
-    #[command(
-        name = "replace",
-        long_about = "Finds and replaces all occurrences of a pattern (text or regex)
-with new text within a specified range of translated chapter files."
-    )]
-    Replace(ReplaceArgs),
 }
 
 impl Command {
     pub fn from_task(task: Task) -> Self {
         match task {
             Task::Glossary => Command::Glossary,
-            Task::Find => Command::Find(FindArgs::default()),
-            Task::Replace => Command::Replace(ReplaceArgs::default()),
             Task::Distribute => Command::Distribute(DistArgs::default()),
             Task::Open => Command::Open(OpenArgs::default()),
             Task::Init => Command::Init(InitArgs::default()),
             Task::Internal => Command::Internal,
             Task::Next => Command::Next,
             Task::Clean => Command::Clean(CleanArgs::default()),
-            Task::Nav => Command::Nav(NavArgs::default()),
-            Task::Print => Command::Print,
         }
     }
-}
-
-#[derive(Debug, Clone, Args, PartialEq, Eq, Default)]
-pub struct FindArgs {
-    /// The text or regular expression to search for
-    pub pattern: Option<String>,
-
-    /// File to write all matching paragraphs to (optional)
-    #[arg(short, long)]
-    pub write: Option<PathBuf>,
-
-    /// The chapter number to start the search from (inclusive)
-    #[arg(long)]
-    pub start: Option<usize>,
-
-    /// The chapter number to end the search at (inclusive)
-    #[arg(long)]
-    pub end: Option<usize>,
-
-    /// Treat the search pattern as a regular expression
-    #[arg(required = false, short, long, action = clap::ArgAction::SetTrue)]
-    pub regex: bool,
-
-    /// Suppress the detailed table output, showing only the summary
-    #[arg(required = false, short, long, action = clap::ArgAction::SetTrue)]
-    pub silent: bool,
-}
-
-#[derive(Debug, Clone, Args, PartialEq, Eq, Default)]
-pub struct ReplaceArgs {
-    /// The text or regular expression to replace
-    pub old: Option<String>,
-    /// The text to replace with
-    pub new: Option<String>,
-    /// Treat the search pattern as a regular expression
-    #[arg(required = false, short, long, action = clap::ArgAction::SetTrue)]
-    pub regex: bool,
 }
 
 #[derive(Debug, Clone, Args, PartialEq, Eq, Default)]
@@ -216,22 +149,14 @@ pub enum Task {
     Clean,
     /// The glossary generation task
     Glossary,
-    /// The pattern finding task
-    Find,
-    /// The pattern replacing task
-    Replace,
     /// The distribution task
     Distribute,
     /// The chapter opening task
     Open,
-    /// The navigation links task
-    Nav,
     /// The next chapter glossary task
     Next,
     /// Initializing new project task
     Init,
     /// Editing the config task
     Internal,
-    /// Print base projects path and all known projects to console.
-    Print,
 }

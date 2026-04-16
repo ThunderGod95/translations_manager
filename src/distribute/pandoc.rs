@@ -2,7 +2,6 @@ use super::{DistributionFormat, VolumeInfo};
 use crate::util::{get_current_date, normalize_path};
 use anyhow::{Context, Result, anyhow};
 use console::style;
-use jwalk::WalkDir;
 use path_clean::PathClean;
 use std::fmt::Display;
 use std::fs;
@@ -235,26 +234,30 @@ fn apply_epub_args(
 ) -> Result<()> {
     let epub_dist_info = assets_dir.join("dist");
 
-    if fs::metadata(&epub_dist_info).is_ok() {
-        for entry in WalkDir::new(&epub_dist_info)
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
-            let entry_path = entry.path();
+    if epub_dist_info.is_dir() {
+        let mut dirs_to_visit = vec![epub_dist_info];
 
-            if entry.file_type().is_dir() {
-                continue;
-            }
+        while let Some(current_dir) = dirs_to_visit.pop() {
+            if let Ok(entries) = fs::read_dir(current_dir) {
+                for entry in entries.filter_map(|e| e.ok()) {
+                    let entry_path = entry.path();
 
-            if let Some(ex_str) = entry_path.extension().and_then(|s| s.to_str()) {
-                match ex_str {
-                    "css" => {
-                        pandoc_args.embed_css(entry_path);
+                    if entry_path.is_dir() {
+                        dirs_to_visit.push(entry_path);
+                        continue;
                     }
-                    "ttf" => {
-                        pandoc_args.embed_font(entry_path);
+
+                    if let Some(ex_str) = entry_path.extension().and_then(|s| s.to_str()) {
+                        match ex_str {
+                            "css" => {
+                                pandoc_args.embed_css(entry_path);
+                            }
+                            "ttf" => {
+                                pandoc_args.embed_font(entry_path);
+                            }
+                            _ => {}
+                        }
                     }
-                    _ => {}
                 }
             }
         }
