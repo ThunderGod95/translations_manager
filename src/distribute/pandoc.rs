@@ -1,6 +1,6 @@
 use super::{DistributionFormat, VolumeInfo};
 use crate::util::{get_current_date, normalize_path};
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use console::style;
 use path_clean::PathClean;
 use std::fmt::Display;

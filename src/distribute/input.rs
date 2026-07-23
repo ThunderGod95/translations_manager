@@ -4,6 +4,8 @@ use crate::util::collect_numbered_file_paths;
 use super::{DistributionFormat, VolumeInfo};
 
 use anyhow::{Context, Result, anyhow};
+use comrak::nodes::NodeValue;
+use comrak::{Arena, Options, format_commonmark, parse_document};
 use rayon::prelude::*;
 use std::fs::read_to_string;
 use std::path::{Path, PathBuf};
@@ -54,7 +56,7 @@ pub(super) fn build_input(
     Ok(final_content)
 }
 
-fn read_files(file_paths: &Vec<PathBuf>, buffer: &mut String) -> Result<()> {
+fn read_files(file_paths: &[PathBuf], buffer: &mut String) -> Result<()> {
     let mut indexed_results: Vec<(usize, String)> = file_paths
         .par_iter()
         .enumerate()
@@ -62,22 +64,29 @@ fn read_files(file_paths: &Vec<PathBuf>, buffer: &mut String) -> Result<()> {
             let content = read_to_string(file_path)
                 .with_context(|| format!("Failed to read file: {}", file_path.display()));
 
-            content.map(|c| (index, c))
+            content.map(|content| (index, content))
         })
-        .collect::<Result<Vec<(usize, String)>, _>>()?;
+        .collect::<Result<Vec<_>>>()?;
 
     indexed_results.sort_by_key(|(index, _)| *index);
 
-    for (i, (_, content_str)) in indexed_results.iter().enumerate() {
-        if i > 0 {
-            buffer.push_str("\n\n"); // Add separator
+    for (position, (_, content)) in indexed_results.into_iter().enumerate() {
+        if position > 0 {
+            buffer.push_str("\n\n");
         }
 
-        // Strip BOM if present
-        let content_slice = content_str.strip_prefix('\u{FEFF}').unwrap_or(content_str);
-        // Strip navigation links if present
-        let content_slice = clean::sanitize_chapter(&content_slice);
-        buffer.push_str(&content_slice);
+        let content = content.strip_prefix('\u{FEFF}').unwrap_or(&content);
+
+        let content = clean::sanitize_chapter(content);
+
+        let content = scope_footnotes(&content, position + 1).with_context(|| {
+            format!(
+                "Failed to process footnotes in {}",
+                file_paths[position].display()
+            )
+        })?;
+
+        buffer.push_str(&content);
     }
 
     Ok(())
@@ -99,4 +108,34 @@ fn build_cover_prefix(
     }
 
     Ok((cover_prefix, added_size))
+}
+
+fn scope_footnotes(content: &str, chapter_scope: usize) -> Result<String> {
+    let arena = Arena::new();
+
+    let mut options = Options::default();
+    options.extension.footnotes = true;
+
+    let root = parse_document(&arena, content, &options);
+
+    for node in root.descendants() {
+        let mut data = node.data.borrow_mut();
+
+        match &mut data.value {
+            NodeValue::FootnoteDefinition(definition) => {
+                definition.name = format!("chapter-{chapter_scope}-{}", definition.name);
+            }
+
+            NodeValue::FootnoteReference(reference) => {
+                reference.name = format!("chapter-{chapter_scope}-{}", reference.name);
+            }
+
+            _ => {}
+        }
+    }
+
+    let mut output = String::new();
+    format_commonmark(root, &options, &mut output)?;
+
+    Ok(output)
 }

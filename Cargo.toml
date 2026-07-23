@@ -33,6 +33,7 @@ num_cpus = "1.17.0"
 indicatif = { version = "0.18.3", features = ["rayon"] }
 which = "8.0.0"
 fancy-regex = "0.16.2"
+comrak = "0.54.0"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_System_Console"] }
