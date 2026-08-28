@@ -15,6 +15,7 @@ use crate::runner::tasks::{run_clean_task, run_next_task};
 use crate::runner::*;
 use crate::util::{is_standalone, prompt_for_rerun};
 
+mod core;
 mod cache;
 mod clean;
 mod config;
