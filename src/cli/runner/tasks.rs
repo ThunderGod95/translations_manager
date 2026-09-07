@@ -8,7 +8,7 @@ use dialoguer::{Confirm, theme::ColorfulTheme};
 use strum::VariantArray;
 
 use super::cli::*;
-use crate::{
+use crate::cli::{
     clean,
     config::CONFIG,
     distribute::*,

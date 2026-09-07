@@ -4,7 +4,7 @@ mod pipeline;
 
 use anyhow::Result;
 
-use crate::{
+use crate::cli::{
     clean::{
         formatter::*,
         pipeline::{CleanOptions, Pipeline},

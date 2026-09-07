@@ -9,7 +9,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use directories::ProjectDirs;
 use time::{OffsetDateTime, macros::format_description};
 
-use crate::config::{CONFIG, PROJECT_PATH_QUALIFIERS};
+use crate::cli::config::{CONFIG, PROJECT_PATH_QUALIFIERS};
 
 pub fn get_config_file_path() -> Result<PathBuf> {
     let project_dirs = ProjectDirs::from(
@@ -232,7 +232,7 @@ mod backup {
     use anyhow::{Context, Result, anyhow};
     use rayon::iter::{ParallelBridge, ParallelIterator};
 
-    use crate::util::get_current_date_time;
+    use super::get_current_date_time;
 
     pub(super) fn backup_folder(source_path: &Path) -> Result<()> {
         let backup_root = resolve_backup_root(source_path)?;

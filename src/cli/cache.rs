@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
 
-use crate::util::get_cache_path;
+use crate::cli::util::get_cache_path;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Cache {

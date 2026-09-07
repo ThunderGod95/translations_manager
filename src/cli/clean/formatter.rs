@@ -1,4 +1,4 @@
-use crate::clean::chapter::Chapter;
+use super::chapter::Chapter;
 use fancy_regex::Regex;
 use std::{fmt::Debug, sync::LazyLock};
 

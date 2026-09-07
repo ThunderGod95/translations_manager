@@ -1,11 +1,11 @@
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use arboard::Clipboard;
 use console::style;
 use std::fs::{self, File};
 use std::path::Path;
 
 use super::Chapter;
-use crate::editor;
+use crate::cli::editor;
 
 pub fn create_and_open_files(base_path: &Path, chapters: &[Chapter]) -> Result<()> {
     let new_files: Vec<_> = chapters
@@ -72,19 +72,69 @@ pub fn write_raws(write_path: &Path, raws: &[Chapter]) {
     }
 }
 
-pub fn paste_glossary(content: &str) -> Result<()> {
-    let mut clipboard = Clipboard::new()?;
+#[cfg(target_os = "linux")]
+use arboard::SetExtLinux;
 
-    clipboard.set_text(content)?;
+pub const CLIPBOARD_DAEMON_ARG: &str = "__clipboard_daemon";
 
+pub fn copy_prompt(content: &str) -> Result<()> {
     #[cfg(target_os = "linux")]
     {
-        println!("Prompt copied to clipboard!");
-        println!("You can now paste the content into your target application.");
-        println!("Press Ctrl+C to exit.");
+        use std::{
+            env,
+            io::Write,
+            process::{Command, Stdio},
+        };
 
-        clipboard.wait()?;
+        let mut child = Command::new(env::current_exe()?)
+            .arg(CLIPBOARD_DAEMON_ARG)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .context("Failed to start clipboard process")?;
+
+        let mut stdin = child
+            .stdin
+            .take()
+            .context("Failed to open clipboard process stdin")?;
+
+        stdin
+            .write_all(content.as_bytes())
+            .context("Failed to send content to clipboard process")?;
+
+        drop(stdin);
+
+        println!("Prompt copied to clipboard!");
+        return Ok(());
     }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let mut clipboard = Clipboard::new()?;
+        clipboard.set_text(content)?;
+
+        println!("Prompt copied to clipboard!");
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub fn run_clipboard_daemon() -> Result<()> {
+    use std::io::{self, Read};
+
+    let mut content = String::new();
+    io::stdin()
+        .read_to_string(&mut content)
+        .context("Failed to read clipboard content")?;
+
+    let mut clipboard = Clipboard::new()?;
+
+    clipboard
+        .set()
+        .wait()
+        .text(content)
+        .context("Failed to set clipboard")?;
 
     Ok(())
 }

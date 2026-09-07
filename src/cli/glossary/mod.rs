@@ -1,6 +1,6 @@
 mod chapter;
 mod data;
-mod util;
+pub mod util;
 
 use std::fs::read_to_string;
 
@@ -9,9 +9,14 @@ use dialoguer::{Confirm, theme::ColorfulTheme};
 use itertools::Itertools;
 
 use crate::{
-    config::{CONFIG, ProjectPaths},
-    core::glossary::{GlossaryEntry, GlossaryOptions, create_micro_glossary_with_options},
-    util::is_file_empty,
+    cli::{
+        config::{CONFIG, ProjectPaths},
+        util::is_file_empty,
+    },
+    core::{
+        glossary::{GlossaryEntry, GlossaryOptions},
+        prompt::{PreparePromptRequest, prepare_translation_prompt},
+    },
 };
 
 use chapter::*;
@@ -66,10 +71,14 @@ impl GlossaryProcessor {
     }
 
     fn process_new_chapters(&self) -> Result<()> {
-        let (chapter_file, fuzzy_threshold) = {
+        let (chapter_file, fuzzy_threshold, translation_prompt_file) = {
             let config = CONFIG.read().expect("Config lock poisoned");
 
-            (config.chapter_file.clone(), config.fuzzy_search_threshold)
+            (
+                config.chapter_file.clone(),
+                config.fuzzy_search_threshold,
+                config.translation_prompt_file.clone(),
+            )
         };
 
         let chapter_file_path = self.paths.assets_folder.join(chapter_file);
@@ -88,15 +97,25 @@ impl GlossaryProcessor {
             .map(|chapter| &chapter.text)
             .join("\n\n--\n\n");
 
-        let found_entries = create_micro_glossary_with_options(
-            &combined_chapter_text,
-            &self.glossary_data,
-            GlossaryOptions {
+        let prompt_template =
+            read_to_string(self.paths.assets_folder.join(translation_prompt_file))
+                .context("Failed to read translation prompt file")?;
+
+        let request = PreparePromptRequest {
+            chapter: combined_chapter_text,
+            glossary: self.glossary_data.clone(),
+            translation_prompt: prompt_template,
+            glossary_options: GlossaryOptions {
                 fuzzy: true,
                 fuzzy_threshold,
             },
-        )
-        .context("Failed to generate micro glossary")?;
+        };
+
+        let result = prepare_translation_prompt(request)
+            .context("Failed to generate translation prompt and micro glossary")?;
+
+        let found_entries = result.micro_glossary;
+        let final_prompt_string = result.prompt;
 
         println!(
             "Total unique glossary terms after all phases: {}.",
@@ -113,48 +132,15 @@ impl GlossaryProcessor {
             }
         }
 
-        let micro_glossary_string = format_micro_glossary(&found_entries);
-
-        let final_prompt_string =
-            self.build_final_prompt(&micro_glossary_string, &combined_chapter_text)?;
-
-        paste_glossary(&final_prompt_string)?;
-
         if self.write_raw {
             write_raws(&self.paths.raws_folder, &chapters);
         }
 
         create_and_open_files(&self.paths.translations_folder, &chapters)?;
 
+        copy_prompt(&final_prompt_string)?;
+
         Ok(())
-    }
-
-    /// Reads the prompt template and combines it with the glossary and
-    /// chapter text.
-    fn build_final_prompt(
-        &self,
-        micro_glossary_string: &str,
-        combined_chapter_text: &str,
-    ) -> Result<String> {
-        let translation_prompt_file = {
-            let config = CONFIG.read().expect("Config lock poisoned");
-
-            config.translation_prompt_file.clone()
-        };
-
-        let prompt_template =
-            read_to_string(self.paths.assets_folder.join(translation_prompt_file))
-                .context("Failed to read translation prompt file")?;
-
-        Ok(format!(
-            "{}\n\n\
-             **Glossary**\n\n\
-             {}\n\n\
-             ---\n\n\
-             **Chinese Chapter(s) to Translate:**\n\
-             {}",
-            prompt_template, micro_glossary_string, combined_chapter_text
-        ))
     }
 }
 

@@ -6,7 +6,7 @@ use rayon::prelude::*;
 use strum::{Display, EnumString, VariantNames};
 use which::which;
 
-use crate::config::CONFIG;
+use crate::cli::config::CONFIG;
 
 use self::Editor::*;
 

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand};
 use strum::{Display, EnumString, VariantArray};
 
-use crate::distribute::DistributionFormat;
+use crate::cli::distribute::DistributionFormat;
 
 #[derive(Parser, Debug, Clone)]
 #[command(
@@ -23,6 +23,10 @@ pub struct Cli {
     /// Sets the base directory where all translation projects are located
     #[arg(long, value_name = "PATH")]
     pub path: Option<PathBuf>,
+
+    /// Start the HTTP server instead of CLI.
+    #[arg(long)]
+    pub server: bool,
 }
 
 #[derive(Debug, Subcommand, Clone, PartialEq, Eq)]

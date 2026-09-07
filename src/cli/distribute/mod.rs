@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use strum::{Display, VariantArray};
 use threadpool::ThreadPool;
 
-use crate::config::{CONFIG, ProjectPaths};
+use crate::cli::config::{CONFIG, ProjectPaths};
 
 use self::input::build_input;
 

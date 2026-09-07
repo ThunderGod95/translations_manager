@@ -189,7 +189,7 @@ fn aho_corasick_find_all<'a>(terms: &[&'a str], text: &str) -> Result<HashSet<&'
 ///
 /// Each word identified by Jieba is compared against the candidate glossary
 /// terms using Levenshtein distance.
-fn chinese_fuzzy_search<'a>(terms: &[&'a str], text: &'a str, threshold: u32) -> HashSet<&'a str> {    
+fn chinese_fuzzy_search<'a>(terms: &[&'a str], text: &'a str, threshold: u32) -> HashSet<&'a str> {
     if terms.is_empty() || text.is_empty() || threshold == 0 {
         return HashSet::new();
     }

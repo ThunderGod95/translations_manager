@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::{fs, path::PathBuf};
 
-use crate::{
+use crate::cli::{
     clean::{
         chapter::{Chapter, parse_chapters},
         formatter::{ChapterFormatter, RenderContext},
@@ -46,7 +46,7 @@ impl Pipeline {
             use std::io::{self, Write};
             io::stdout().flush().ok();
 
-            match crate::util::backup(&options.translations_path) {
+            match crate::cli::util::backup(&options.translations_path) {
                 Ok(_) => println!("Done."),
                 Err(e) => eprintln!("\nWarning: Backup failed: {}", e),
             }

@@ -6,7 +6,7 @@ use console::style;
 use dialoguer::FuzzySelect;
 use dialoguer::theme::ColorfulTheme;
 
-use crate::cache::*;
+use crate::cli::cache::*;
 
 pub fn select_project(base_path: impl AsRef<Path>) -> Result<String> {
     let base_path = base_path.as_ref();

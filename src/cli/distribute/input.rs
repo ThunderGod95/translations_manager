@@ -1,5 +1,5 @@
-use crate::clean;
-use crate::util::collect_numbered_file_paths;
+use crate::cli::clean;
+use crate::cli::util::collect_numbered_file_paths;
 
 use super::{DistributionFormat, VolumeInfo};
 
